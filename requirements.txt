@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+elasticsearch>=8.17,<9
+openai
+pydantic
+pydantic-settings
+python-dotenv
+structlog
+pytest
+ruff

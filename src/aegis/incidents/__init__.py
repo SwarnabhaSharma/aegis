@@ -1,0 +1,1 @@
+"""Aegis module skeleton. Phase 0 — imports only; behavior lands in later phases."""
