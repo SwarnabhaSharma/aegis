@@ -93,3 +93,13 @@ def test_unknown_agent_rejected():
     llm = FakeLLM()
     with pytest.raises(ValueError):
         ReasoningAgent("A9", llm)
+
+
+def test_extract_json_strips_think_and_fences():
+    from aegis.integrations.llm import _extract_json
+
+    assert json.loads(_extract_json("<think>reason</think>{\"a\": 1}")) == {"a": 1}
+    assert json.loads(_extract_json("```json\n{\"b\": [1, 2]}\n```")) == {"b": [1, 2]}
+    assert json.loads(_extract_json("prefix {\"c\": {\"d\": \"x\"}} trail")) == {"c": {"d": "x"}}
+    with pytest.raises(ValueError):
+        _extract_json("")

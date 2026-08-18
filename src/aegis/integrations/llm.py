@@ -40,7 +40,7 @@ class LLMClient:
         for attempt in (1, 2):  # retry-once
             try:
                 raw = self._call(system, user, temperature)
-                data = json.loads(raw)
+                data = json.loads(_extract_json(raw))
                 if not isinstance(data, dict):
                     raise ValueError("expected JSON object")
                 return LLMResult(ok=True, data=data, raw=raw)
@@ -72,3 +72,20 @@ class LLMClient:
             degraded=True,
             error="LLM unavailable or unparseable; deterministic degrade",
         )
+
+
+def _extract_json(raw: str) -> str:
+    """Strip reasoning/<think> blocks and markdown fences; return JSON object text."""
+    if not raw:
+        raise ValueError("empty LLM response")
+    # Ornith (and similar) emit <think>...</think> before the answer.
+    if "<think>" in raw:
+        raw = raw.split("</think>", 1)[-1]
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").removeprefix("json").strip()
+    # last resort: first '{' through last '}' (balanced-ish; good enough for JSON)
+    start, end = raw.find("{"), raw.rfind("}")
+    if start != -1 and end > start:
+        raw = raw[start : end + 1]
+    return raw
