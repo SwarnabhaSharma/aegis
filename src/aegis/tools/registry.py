@@ -75,6 +75,26 @@ class ToolRegistry:
         return [n for n, t in self._tools.items() if t.authorized(agent)]
 
 
+def build_response_tools(executor) -> ToolRegistry:
+    """Response tools (Phase 5). Restricted to D1/executor — no reasoning agent may call."""
+    from aegis.executor.executor import SimulatedExecutor  # local import avoids cycle
+
+    if not isinstance(executor, SimulatedExecutor):
+        raise TypeError("executor must be SimulatedExecutor")
+    reg = ToolRegistry()
+    reg.register(Tool(
+        name="isolate_host",
+        schema_in={"host": str, "incident_id": str, "idempotency_key": str},
+        risk_class=HIGH,
+        reversible=False,
+        allowed_agents={"D1", "executor"},
+        func=lambda host, incident_id, idempotency_key=None: executor.isolate_host(
+            host, incident_id, idempotency_key
+        ),
+    ))
+    return reg
+
+
 def build_read_tools(telemetry: TelemetrySource) -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(Tool(
