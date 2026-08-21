@@ -75,6 +75,52 @@ class ToolRegistry:
         return [n for n, t in self._tools.items() if t.authorized(agent)]
 
 
+def build_verify_tools(verifier) -> ToolRegistry:
+    """Verify tools (Phase 6). Restricted to D2/verifier."""
+    from aegis.verifier.verifier import SimulatedVerifier
+
+    if not isinstance(verifier, SimulatedVerifier):
+        raise TypeError("verifier must be SimulatedVerifier")
+    reg = ToolRegistry()
+    reg.register(Tool(
+        name="verify_host_isolated",
+        schema_in={"host": str, "incident_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={"D2", "verifier"},
+        func=lambda host, incident_id: verifier.verify_host_isolated(host, incident_id),
+    ))
+    reg.register(Tool(
+        name="verify_process_terminated",
+        schema_in={"host": str, "pid": str, "incident_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={"D2", "verifier"},
+        func=lambda host, pid, incident_id: verifier.verify_process_terminated(
+            host, pid, incident_id
+        ),
+    ))
+    reg.register(Tool(
+        name="verify_indicator_blocked",
+        schema_in={"indicator": str, "incident_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={"D2", "verifier"},
+        func=lambda indicator, incident_id: verifier.verify_indicator_blocked(
+            indicator, incident_id
+        ),
+    ))
+    reg.register(Tool(
+        name="verify_persistence_removed",
+        schema_in={"host": str, "incident_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={"D2", "verifier"},
+        func=lambda host, incident_id: verifier.verify_persistence_removed(host, incident_id),
+    ))
+    return reg
+
+
 def build_response_tools(executor) -> ToolRegistry:
     """Response tools (Phase 5). Restricted to D1/executor — no reasoning agent may call."""
     from aegis.executor.executor import SimulatedExecutor  # local import avoids cycle
