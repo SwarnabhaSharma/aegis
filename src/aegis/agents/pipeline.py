@@ -18,7 +18,8 @@ DEFAULT_BUDGETS = {
     "steps_per_agent": 1,  # LLM turns in legacy mode
     "tool_steps_per_agent": 6,  # max tool iterations in agentic mode
     "tool_calls_per_incident": 50,
-    "time_per_agent_ms": 120_000,
+    # measured: 9B reasoning model ~35s/call x 6 turns + corrective passes
+    "time_per_agent_ms": 300_000,
 }
 
 

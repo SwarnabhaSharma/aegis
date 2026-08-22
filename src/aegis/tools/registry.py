@@ -16,6 +16,8 @@ LOW = "LOW"
 MEDIUM = "MEDIUM"
 HIGH = "HIGH"
 
+TOOL_SCHEMA_VERSION = "1"  # §21: bump when any tool's input/output contract changes
+
 # ponytail: _KNOWN_BAD retired — intel/ti.py local-intel-v2 store replaces it
 
 # Phase C G.1: agents A1..A5
@@ -50,6 +52,7 @@ class Tool:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self.calls: list[dict] = []  # every call attempt, ok or not (audit #4)
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -58,14 +61,23 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def call(self, name: str, agent: str, **kwargs):
-        tool = self._tools.get(name)
-        if tool is None:
-            raise KeyError(f"unknown tool: {name}")
-        if not tool.authorized(agent):
-            raise PermissionError(f"{agent} not authorized for {name}")
-        if tool.func is None:
-            raise RuntimeError(f"{name} has no backend")
-        return tool.func(**kwargs)
+        entry = {"tool": name, "agent": agent, "args": kwargs,
+                 "ok": False, "error": ""}
+        self.calls.append(entry)
+        try:
+            tool = self._tools.get(name)
+            if tool is None:
+                raise KeyError(f"unknown tool: {name}")
+            if not tool.authorized(agent):
+                raise PermissionError(f"{agent} not authorized for {name}")
+            if tool.func is None:
+                raise RuntimeError(f"{name} has no backend")
+            result = tool.func(**kwargs)
+            entry["ok"] = True
+            return result
+        except Exception as e:
+            entry["error"] = str(e)
+            raise
 
     def authorized_tools(self, agent: str) -> list[str]:
         return [n for n, t in self._tools.items() if t.authorized(agent)]

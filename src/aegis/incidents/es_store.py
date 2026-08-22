@@ -163,3 +163,29 @@ class ElasticsearchStore(IncidentStore):
             body={"query": {"match_all": {}}, "_source": ["id"], "size": 1000},
         )
         return [h["_source"]["id"] for h in resp["hits"]["hits"]]
+
+    def add_record(self, kind: str, incident_id: str, doc: dict) -> None:
+        self._es.index(
+            index=self._steps_idx,
+            document={
+                "kind": f"record:{kind}",
+                "incident_id": incident_id,
+                "ts": datetime.now(UTC).isoformat(),
+                "doc": doc,
+            },
+            refresh=True,
+        )
+
+    def records(self, incident_id: str, kind: str) -> list[dict]:
+        resp = self._es.search(
+            index=self._steps_idx,
+            body={
+                "query": {"bool": {"must": [
+                    {"term": {"incident_id": incident_id}},
+                    {"term": {"kind": f"record:{kind}"}},
+                ]}},
+                "sort": [{"ts": {"order": "asc"}}],
+                "size": 1000,
+            },
+        )
+        return [h["_source"]["doc"] for h in resp["hits"]["hits"]]

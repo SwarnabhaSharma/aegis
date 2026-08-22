@@ -38,17 +38,33 @@ class LLMClient:
         self._model = model or "default"
         self._client = OpenAI(base_url=base_url, api_key="llama-cpp")  # llama.cpp ignores key
 
+    @property
+    def model_tag(self) -> str:
+        """§21 versioning: identity of the backing model."""
+        return self._model
+
     def complete_json(self, system: str, user: str, temperature: float = 0.0) -> LLMResult:
         last_raw = ""
+        last_error: Exception | None = None
         for attempt in (1, 2):  # retry-once
             try:
-                raw = self._call(system, user, temperature)
+                # attempt 2 after a parse failure gets corrective feedback so
+                # the model repairs its own formatting (quoting etc.)
+                effective = user
+                if attempt == 2 and isinstance(last_error, (json.JSONDecodeError, ValueError)):
+                    effective = (
+                        f"{user}\n\nIMPORTANT: your previous reply was not valid "
+                        "strict JSON. Resend EXACTLY the same content as one valid "
+                        "JSON object: double quotes only, no trailing commas."
+                    )
+                raw = self._call(system, effective, temperature)
                 last_raw = raw
                 data = json.loads(_extract_json(raw))
                 if not isinstance(data, dict):
                     raise ValueError("expected JSON object")
                 return LLMResult(ok=True, data=data, raw=raw)
-            except (LLMError, json.JSONDecodeError, ValueError):
+            except (LLMError, json.JSONDecodeError, ValueError) as e:
+                last_error = e
                 if attempt == 2:
                     return self._degrade(system, user, last_raw)
         return self._degrade(system, user)  # unreachable, keeps linters calm

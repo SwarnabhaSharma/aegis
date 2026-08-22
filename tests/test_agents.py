@@ -43,6 +43,27 @@ def test_llm_client_requires_url():
         LLMClient(base_url="", model="x")
 
 
+def test_llm_format_correction_pass():
+    """Parse failure on attempt 1 -> attempt 2 carries corrective instruction."""
+
+    class LiteralThenJSON(LLMClient):
+        def __init__(self):
+            self.prompts = []
+
+        def _call(self, system, user, temperature):
+            self.prompts.append(user)
+            if len(self.prompts) == 1:
+                # nested single quotes -> invalid as JSON AND Python literal
+                return "{'classification': 'benign', 'reason': 'failed both 'a' and 'b' params'}"
+            return '{"classification": "benign", "reason": "ok"}'
+
+    llm = LiteralThenJSON()
+    r = llm.complete_json("sys", "user prompt")
+    assert r.ok is True
+    assert r.data["classification"] == "benign"
+    assert "not valid strict JSON" in llm.prompts[1]
+
+
 def test_agent_pipeline_all_steps_ok():
     llm = FakeLLM()
     pipe = AgentPipeline(llm)

@@ -43,6 +43,14 @@ class IncidentStore(abc.ABC):
     @abc.abstractmethod
     def all_incident_ids(self) -> list[str]: ...
 
+    @abc.abstractmethod
+    def add_record(self, kind: str, incident_id: str, doc: dict) -> None:
+        """Persist an arbitrary typed step record (toolcall/agentrun/policy/
+        decision/verification/manifest) under the incident."""
+
+    @abc.abstractmethod
+    def records(self, incident_id: str, kind: str) -> list[dict]: ...
+
 
 class InMemoryStore(IncidentStore):
     """Thread-safe fake. Single-writer per incident via per-id lock."""
@@ -52,6 +60,7 @@ class InMemoryStore(IncidentStore):
         self._transitions: dict[str, list[Transition]] = {}
         self._evidence: dict[str, list[Evidence]] = {}
         self._timeline: dict[str, list[TimelineEntry]] = {}
+        self._records: dict[tuple[str, str], list[dict]] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
 
@@ -114,3 +123,9 @@ class InMemoryStore(IncidentStore):
 
     def all_incident_ids(self) -> list[str]:
         return list(self._incidents.keys())
+
+    def add_record(self, kind: str, incident_id: str, doc: dict) -> None:
+        self._records.setdefault((incident_id, kind), []).append(doc)
+
+    def records(self, incident_id: str, kind: str) -> list[dict]:
+        return list(self._records.get((incident_id, kind), []))

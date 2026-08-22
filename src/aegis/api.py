@@ -81,13 +81,20 @@ def create_app(store=None, llm=None) -> FastAPI:
         import aegis.slice as sl
 
         registry = None
+        audit_rec = None
         if st.__class__.__name__ == "ElasticsearchStore":
             try:
                 _, registry = sl.build_registry()
             except Exception:
                 pass  # telemetry unreachable: single-shot fallback
+            from aegis.audit import AuditRecorder
+
+            es_client = st._es  # ponytail: recorder reuses the store's client
+            audit_rec = AuditRecorder(es=es_client)
+            audit_rec.ensure_index()
         llm = default_llm or LLMClient(settings.llm_base_url, settings.llm_model)
-        res = sl.investigate(st, incident_id, llm, registry=registry)
+        res = sl.investigate(st, incident_id, llm, registry=registry,
+                             audit=audit_rec)
         if not res["ok"]:
             raise HTTPException(status_code=502, detail={
                 "error": "pipeline degraded; escalated to human",
@@ -99,6 +106,8 @@ def create_app(store=None, llm=None) -> FastAPI:
             "incident": st.get(incident_id).model_dump(),
             "steps": [vars(s) for s in res["steps"]],
             "evidence_count": res["evidence_count"],
+            "validation": res.get("validation", {}),
+            "manifest": res.get("manifest", {}),
             "related": [{"incident_id": r["incident_id"], "shared": r["shared"]}
                         for r in res["related"]],
             "decision": {"decision": decision.decision.value,
