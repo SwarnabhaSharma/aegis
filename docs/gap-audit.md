@@ -1,7 +1,7 @@
 # Aegis Gap Audit — Living Tracker
 
 - **Source of truth**: `D:\Resume\Aegis — Master Project Architecture Prompt — Polished.md` (§3–§29)
-- **Audit date**: 2026-08-22 (post Phase 0–7 + consolidation, commit `c53d00b`)
+- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; **T1 security hardening applied `bb18bd2`**)
 - **Legend**:
   - `PRESENT` — built, meets spec
   - `PARTIAL` — exists, below spec (notes name the delta)
@@ -18,7 +18,7 @@
 | Minimum necessary data & authority | PARTIAL | Authority minimal (`state_machine.py`, registry); agents see full context dict — no field minimization (blocked on privacy §10) |
 | AI authority boundary (3.2) | PRESENT | Agents propose-only; state machine rejects agent actor |
 | AI vs deterministic split (3.3) | PRESENT | LLM confined to `agents/reasoning.py`; D1/D2 deterministic |
-| Evidence integrity (3.4) | PARTIAL | Degrade-not-fabricate ✅; evidence_ids unvalidated (#6); synthetic-vs-real provenance flag missing on Evidence |
+| Evidence integrity (3.4) | PARTIAL | Degrade-not-fabricate ✅; evidence_ids validated + fabricated stripped/flagged (`bb18bd2`, #6 closed); synthetic-vs-real provenance flag missing on Evidence |
 | Fail-safe operation (3.5) | PRESENT | Degrade→ESCALATED, budget→stop, verify-fail→REOPEN→ESCALATED |
 
 ## §4 Autonomy model
@@ -67,7 +67,7 @@
 | Typed output schema | ABSENT | not declared on Tool |
 | Authorization + permitted agents | PRESENT | registry-enforced gate |
 | Risk classification | PRESENT | READ/LOW/MEDIUM/HIGH |
-| Audit logging per tool call | ABSENT | part of #4/#5 |
+| Audit logging per tool call | PRESENT | registry `.calls` capture + AuditRecorder (`bb18bd2`, #4 closed) |
 | Timeout enforcement | PARTIAL | field exists, never enforced |
 | Retry behavior | PARTIAL | field exists, never used |
 | Rate limits | ABSENT | |
@@ -123,21 +123,21 @@ Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabili
 | Relationships / evidence graph | ABSENT | simpler model chosen; justification doc owed |
 | Contradictory evidence handling | ABSENT | |
 | Evidence expiration | ABSENT | |
-| Conclusions linked to existing evidence (D-008 enforcement) | ABSENT | #6 validation |
+| Conclusions linked to existing evidence (D-008 enforcement) | PRESENT | validate_evidence strips fabricated refs (`bb18bd2`) |
 
 ## §15 Adversarial security
 
 | Threat | Status | Notes |
 |---|---|---|
-| Prompt injection via telemetry | ABSENT | command lines/filenames flow raw into prompts — T1 priority |
-| Indirect prompt injection | ABSENT | same hole |
+| Prompt injection via telemetry | PARTIAL | untrusted_data wrapping + escaping + system rule + heuristic detector (`bb18bd2`); no adversarial eval corpus yet (T4 measures) |
+| Indirect prompt injection | PARTIAL | same mechanism covers TI/tool-result paths; corpus measurement pending (T4) |
 | Tool abuse | PRESENT | registry authorization |
 | Privilege escalation | PRESENT | static permission sets |
 | Data exfiltration | PARTIAL | tool scope bounds reads; no minimization layer |
 | Malicious threat intelligence | ABSENT | N/A until external TI source exists |
 | Agent loops | PRESENT | no agent→agent calls; budgets |
 | Excessive tool calls | PRESENT | real budget accounting |
-| Hallucinated evidence | ABSENT | #6 validation closes it |
+| Hallucinated evidence | PRESENT | validation strips + flags fabricated refs (`bb18bd2`, #6 closed) |
 | False remediation | PRESENT | D2 verifies actual state |
 | Verification manipulation | PRESENT | verifier separate deterministic service |
 
@@ -168,10 +168,10 @@ Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabili
 |---|---|---|
 | Transitions + timeline records | PRESENT | incidents-steps index |
 | Policy version capture | PRESENT | on every decision |
-| audit-* index + AuditEvent entity | ABSENT | #4 |
-| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | ABSENT | #4/#5 |
-| AgentRun / ToolCall persisted records | ABSENT | #5 |
-| Tamper protection (hash chain) | ABSENT | post-#4 |
+| audit-* index + AuditEvent entity | PRESENT | `audit.py` AuditRecorder + aegis-dev-audit sink (`bb18bd2`, #4 closed) |
+| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PARTIAL | pipeline stages/tool calls/policy/injection/validation captured; data-requested/released/withheld + retries pending (needs privacy §10) |
+| AgentRun / ToolCall persisted records | PRESENT | record:agentrun + record:toolcall via add_record (`bb18bd2`, #5 closed) |
+| Tamper protection (hash chain) | ABSENT | post-#4 layer |
 
 ## §19 Data model entities
 
@@ -179,10 +179,10 @@ Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabili
 |---|---|
 | Incident / Alert / TimelineEvent / Evidence / Transition | PRESENT |
 | Asset / Identity / Indicator | ABSENT (#9 asset = hardcoded dict) |
-| AgentRun / ToolCall / PolicyDecision-persisted / Approval / ResponseAction-persisted / Verification-persisted | ABSENT (#5) |
-| AuditEvent | ABSENT (#4) |
+| AgentRun / ToolCall / PolicyDecision-persisted / Approval / ResponseAction-persisted / Verification-persisted | PARTIAL | agentrun/toolcall/policy/verification persisted (`bb18bd2`); Approval + ResponseAction records still transient (#5 remainder) |
+| AuditEvent | PRESENT | aegis-dev-audit sink (`bb18bd2`) |
 
-Indices: `incidents-*` ✅ · `incident-steps-*` ✅ partial · `audit-*` ❌ · `telemetry-*` ✅ read-only.
+Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeline/record:*) · `audit-*` ✅ (`bb18bd2`) · `telemetry-*` ✅ read-only.
 
 ## §20 Evaluation framework
 
@@ -197,10 +197,10 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ partial · `audit-*` ❌ ·
 | Requirement | Status | Notes |
 |---|---|---|
 | Policy version per incident decision | PRESENT | |
-| Model version recording | ABSENT | T1 manifest |
-| Prompt ids/versioning | ABSENT | prompts inline, no ids |
-| Tool schema versions | ABSENT | |
-| Per-incident version manifest block | ABSENT | T1 |
+| Model version recording | PRESENT | manifest via LLMClient.model_tag (`bb18bd2`) |
+| Prompt ids/versioning | PRESENT | PROMPT_VERSION const in reasoning.py (`bb18bd2`) |
+| Tool schema versions | PRESENT | TOOL_SCHEMA_VERSION in registry (`bb18bd2`) |
+| Per-incident version manifest block | PRESENT | record:manifest + slice result (`bb18bd2`) |
 
 ## §26 DoD discipline
 
@@ -242,8 +242,8 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ partial · `audit-*` ❌ ·
 
 | Tier | Scope | Closes sections | Debt ids retired |
 |---|---|---|---|
-| T1 Security hardening | telemetry-as-untrusted defense; evidence_ids validation; audit pipeline (#4+#5); version manifest | §15, §14(D-008), §18, §19(partial), §21 | #4, #5, #6 |
-| T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | #7, #8, #11 |
+| T1 Security hardening | telemetry-as-untrusted defense; evidence_ids validation; audit pipeline (#4+#5); version manifest | §15, §14(D-008), §18, §19(partial), §21 | **DONE `bb18bd2`** — #4, #5, #6 closed (Approval/ResponseAction records + hash chain remain) |
+| T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | #7, #8, #11 — NEXT |
 | T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | #9 (asset map folds into classification context) |
 | T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | #12 doc note |
 
