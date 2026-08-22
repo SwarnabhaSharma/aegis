@@ -14,6 +14,7 @@ def ingest_alert(store: IncidentStore, source: str, fields: dict, incident_type:
         source_alert_id=alert.id,
         type=incident_type,
         severity=fields.get("severity", "unknown"),
+        fields=fields,
         created_at=datetime.now(UTC),
     )
     store.create(incident)

@@ -43,6 +43,7 @@ class Incident(BaseModel):
     version: int = 1
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    fields: dict[str, Any] = Field(default_factory=dict)
     # child records land in incident-steps-* (timeline/evidence/etc.), not inline here.
     timeline: list[dict[str, Any]] = Field(default_factory=list)
 
