@@ -53,13 +53,11 @@ def test_investigate_auto_allow_path(client):
     r = c.post(f"/incidents/{inc_id}/investigate")
     assert r.status_code == 200
     body = r.json()
-    # FakeLLM confidence 0.95 + win-vm low criticality -> auto-allow even
-    # with zero persisted evidence? evidence_count=0 fails >=3 -> DENY.
-    assert body["decision"]["decision"] in {"ALLOW", "DENY"}
-    if body["decision"]["decision"] == "ALLOW":
-        assert body["incident"]["state"] == "AUTHORIZED"
-    else:
-        assert body["incident"]["state"] == "FAILED"
+    # slice.investigate persists 3 synthetic evidence records; FakeLLM conf
+    # 0.95 + win-vm low criticality -> policy auto-ALLOW.
+    assert body["decision"]["decision"] == "ALLOW"
+    assert body["incident"]["state"] == "AUTHORIZED"
+    assert body["evidence_count"] == 3
 
 
 def test_approve_gate_requires_awaiting_state(client):

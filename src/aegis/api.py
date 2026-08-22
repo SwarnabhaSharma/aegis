@@ -9,13 +9,11 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from aegis.agents.pipeline import AgentPipeline
 from aegis.config import get_settings
 from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
 from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
-from aegis.policies.engine import Decision, evaluate
 
 
 class AlertIn(BaseModel):
@@ -76,50 +74,33 @@ def create_app(store=None, llm=None) -> FastAPI:
 
     @app.post("/incidents/{incident_id}/investigate")
     def investigate(incident_id: str):
-        # ponytail: mirrors scripts/run_slice.py flow; consolidate when the
-        # slice runner moves into src (single orchestration path).
-        inc = _get(incident_id)
-        orch.transition(incident_id, IncidentState.TRIAGING,
-                        "orchestrator", "api investigate")
+        # Consolidated orchestration via aegis.slice (single path with CLI).
+        # Agentic registry only when the store itself is ES-backed — keeps
+        # memory-store tests offline-deterministic regardless of VM state.
+        _get(incident_id)
+        import aegis.slice as sl
+
+        registry = None
+        if st.__class__.__name__ == "ElasticsearchStore":
+            try:
+                _, registry = sl.build_registry()
+            except Exception:
+                pass  # telemetry unreachable: single-shot fallback
         llm = default_llm or LLMClient(settings.llm_base_url, settings.llm_model)
-        pipe = AgentPipeline(llm)
-        summary = {
-            "incident_id": incident_id,
-            "host": inc.fields.get("host", "unknown"),
-            "type": inc.type,
-            "summary": f"Incident type {inc.type} on {inc.fields.get('host', 'unknown')}",
-        }
-        steps, results = pipe.run(summary, {})
-        if any(not s.ok for s in steps):
-            orch.transition(incident_id, IncidentState.ESCALATED,
-                            "orchestrator", "pipeline degraded")
+        res = sl.investigate(st, incident_id, llm, registry=registry)
+        if not res["ok"]:
             raise HTTPException(status_code=502, detail={
                 "error": "pipeline degraded; escalated to human",
-                "steps": [vars(s) for s in steps],
+                "steps": [vars(s) for s in res["steps"]],
+                "errors": res["errors"],
             })
-        for to_state in (IncidentState.INVESTIGATING, IncidentState.CORRELATING,
-                         IncidentState.ASSESSING, IncidentState.RESPONSE_PLANNED):
-            orch.transition(incident_id, to_state, "orchestrator", "pipeline progress")
-
-        confidence = 0.0
-        a4 = results.get("A4")
-        if a4 and isinstance(a4.data.get("confidence"), (int, float)):
-            confidence = float(a4.data["confidence"])
-        facts = {"host": inc.fields.get("host"), "confidence": confidence,
-                 "evidence_count": len(st.evidence(incident_id))}
-        decision = evaluate("isolate_host", facts)
-        if decision.decision == Decision.DENY:
-            orch.transition(incident_id, IncidentState.FAILED,
-                            "orchestrator", decision.reason)
-        elif decision.decision == Decision.APPROVE:
-            orch.transition(incident_id, IncidentState.AWAITING_APPROVAL,
-                            "orchestrator", "human approval required")
-        else:
-            orch.transition(incident_id, IncidentState.AUTHORIZED,
-                            "orchestrator", "auto-allow by policy")
+        decision = res["decision"]
         return {
             "incident": st.get(incident_id).model_dump(),
-            "steps": [vars(s) for s in steps],
+            "steps": [vars(s) for s in res["steps"]],
+            "evidence_count": res["evidence_count"],
+            "related": [{"incident_id": r["incident_id"], "shared": r["shared"]}
+                        for r in res["related"]],
             "decision": {"decision": decision.decision.value,
                          "reason": decision.reason,
                          "policy_version": decision.policy_version},
