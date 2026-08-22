@@ -122,14 +122,16 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
         s = get_settings()
         llm = LLMClient(s.llm_base_url, s.llm_model)
 
-    pipe = AgentPipeline(llm)
-
     # telemetry mode: real seeds the incident from an actual ES event and
-    # feeds agents through the production ToolRegistry read tools.
+    # gives agents the production ToolRegistry (agentic loop, debt #2).
     es = tel = None
     seed = None
+    reg = None
     if telemetry_mode == "real":
+        from aegis.tools.registry import build_read_tools
+
         es, tel = _live_telemetry()
+        reg = build_read_tools(tel)
         candidates = tel.search_events(host=host, event_id="1", limit=5)
         if not candidates:
             raise RuntimeError(f"no process-create events for host {host!r} in ES")
@@ -153,35 +155,19 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
                        fields=alert_fields, incident_type="powershell")
     orch.transition(inc.id, IncidentState.TRIAGING, "orchestrator", "slice start")
 
-    # 2. pipeline A1-A5 (each drives one state step in O.2)
+    # 2. pipeline A1-A5 — agentic (registry) in real mode, canned strings otherwise
+    pipe = AgentPipeline(llm, registry=reg)
     incident_summary = {"incident_id": inc.id, "host": host,
                         "type": "powershell",
                         "summary": summary_text}
     tool_calls = {a: "" for a in ["A1", "A2", "A3", "A4", "A5"]}
 
     if seed is not None:
-        from aegis.tools.registry import build_read_tools
-        reg = build_read_tools(tel)
+        # agentic mode: agents call tools themselves via the registry.
+        # Runner prefetches the same reads once for evidence persistence.
         proc_tree = reg.call("get_process_tree", "A2", host=host)
         net = reg.call("get_network_connections", "A2", host=host)
         evidence_count = len(proc_tree) + len(net)
-        tool_calls["A2"] = (
-            f"get_process_tree({host}):\n{_fmt_events(proc_tree)}\n"
-            f"get_network_connections({host}):\n{_fmt_events(net)}"
-        )
-        tool_calls["A3"] = f"process-create events for {host}:\n{_fmt_events(proc_tree[:6])}"
-        ips: list[str] = []
-        for e in net:
-            if e.destination_ip and e.destination_ip not in ips:
-                ips.append(e.destination_ip)
-        ti_rows = []
-        for ip in ips[:3]:
-            t = reg.call("lookup_ip", "A4", ip=ip)
-            ti_rows.append(
-                f"lookup_ip({ip}): known_malicious={t['known_malicious']} "
-                f"confidence={t['confidence']} category={t['category']} source={t['source']}"
-            )
-        tool_calls["A4"] = "\n".join(ti_rows) or "(no network indicators found)"
         evidence_events = list(proc_tree) + list(net)
     else:
         # canned synthetic results so A2-A4 have evidence context
@@ -222,6 +208,9 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
     # fail-safe: any degraded -> ESCALATED
     if any(not s.ok for s in steps):
         orch.transition(inc.id, IncidentState.ESCALATED, "orchestrator", "pipeline degraded")
+        for s in steps:
+            if not s.ok:
+                print(f"degraded agent {s.agent}: {s.error}")
         return {"incident": store.get(inc.id), "steps": steps, "verifications": [],
                 "trace": [t.to_state.value for t in store.transitions(inc.id)]}
 

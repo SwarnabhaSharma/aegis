@@ -31,12 +31,18 @@ class TimelineEntry(BaseModel):
 
 
 def evidence_from_tool_result(incident_id: str, tool: str, events: list) -> list[Evidence]:
+    def _raw_ref(e) -> str:
+        if not getattr(e, "raw", None):
+            return ""
+        rid = e.raw.get("winlog", {}).get("record_id", "")
+        return str(rid) if rid else ""
+
     return [
         Evidence(
             incident_id=incident_id,
             source=f"tool:{tool}",
             collection_method=tool,
-            raw_ref=e.raw.get("winlog", {}).get("record_id", "") if getattr(e, "raw", None) else "",
+            raw_ref=_raw_ref(e),
             data={
                 "host": e.host,
                 "event_id": e.event_id,

@@ -101,5 +101,101 @@ def test_extract_json_strips_think_and_fences():
     assert json.loads(_extract_json("<think>reason</think>{\"a\": 1}")) == {"a": 1}
     assert json.loads(_extract_json("```json\n{\"b\": [1, 2]}\n```")) == {"b": [1, 2]}
     assert json.loads(_extract_json("prefix {\"c\": {\"d\": \"x\"}} trail")) == {"c": {"d": "x"}}
+    # models batch two tool calls in one reply -> first object wins
+    assert json.loads(_extract_json(
+        "{\"tool\": \"a\"} {\"tool\": \"b\"}"
+    )) == {"tool": "a"}
+    # Python-literal style (single quotes) observed from Ornith
+    assert json.loads(_extract_json(
+        "{'classification': 'benign', 'severity': 'low', 'n': 1}"
+    )) == {"classification": "benign", "severity": "low", "n": 1}
+    # contraction inside single-quoted value (A3 live failure)
+    assert json.loads(_extract_json(
+        "{'summary': 'the process doesn't exist', 'hypotheses': []}"
+    )) == {"summary": "the process doesn\u2019t exist", "hypotheses": []}
     with pytest.raises(ValueError):
         _extract_json("")
+
+
+# -- agentic loop (debt #2) --
+
+FINAL_A2 = {"summary": "s", "hypotheses": [], "evidence_ids": ["ev_1"],
+            "open_questions": []}
+
+
+class ScriptedLLM(LLMClient):
+    """Pops scripted responses per call; records prompts."""
+
+    def __init__(self, script: list[dict]) -> None:
+        self._script = list(script)
+        self.prompts: list[str] = []
+
+    def complete_json(self, system, user, temperature=0.0) -> LLMResult:
+        self.prompts.append(user)
+        return LLMResult(ok=True, data=self._script.pop(0), raw="{}")
+
+
+@pytest.fixture
+def reg():
+    from aegis.tools.registry import build_read_tools
+    from aegis.tools.telemetry import InMemoryTelemetry, TelemetryEvent
+
+    events = [
+        TelemetryEvent(event_id="1", channel="sysmon", action="ProcessCreate",
+                       host="win-vm", process_name="powershell.exe",
+                       process_pid="100", process_parent="winword.exe",
+                       command_line="powershell -enc SQBFAFA="),
+        TelemetryEvent(event_id="3", channel="sysmon", action="NetworkConnect",
+                       host="win-vm", process_name="powershell.exe",
+                       process_pid="100", destination_ip="185.220.101.4"),
+    ]
+    return build_read_tools(InMemoryTelemetry(events))
+
+
+def test_agentic_uses_tool_then_finalizes(reg):
+    llm = ScriptedLLM([
+        {"tool": "get_process_tree", "args": {"host": "win-vm"}},
+        dict(FINAL_A2),
+    ])
+    r = ReasoningAgent("A2", llm).run({"incident_id": "inc-1"}, registry=reg)
+    assert r.ok is True
+    assert r.tool_calls == 1
+    # second prompt must contain the observation from the real tool result
+    assert "powershell.exe" in llm.prompts[1]
+    assert "Observation 1" in llm.prompts[1]
+
+
+def test_agentic_unauthorized_tool_observed_not_fatal(reg):
+    llm = ScriptedLLM([
+        {"tool": "isolate_host", "args": {"host": "win-vm"}},
+        dict(FINAL_A2),
+    ])
+    r = ReasoningAgent("A2", llm).run({"incident_id": "inc-1"}, registry=reg)
+    assert r.ok is True
+    assert r.tool_calls == 0  # denied call doesn't count as executed
+    assert "ERROR" in llm.prompts[1]
+
+
+def test_agentic_budget_exhausted_degrades(reg):
+    llm = ScriptedLLM([  # always requests tools, never finalizes
+        {"tool": "search_events", "args": {"host": "win-vm"}},
+        {"tool": "search_events", "args": {"event_id": "3"}},
+        {"tool": "search_events", "args": {"limit": 1}},
+    ])
+    r = ReasoningAgent("A4", llm).run({"incident_id": "inc-1"},
+                                      registry=reg, max_steps=3)
+    assert r.ok is False
+    assert r.degraded is True
+    assert "budget" in r.error
+
+
+def test_agentic_a5_can_fetch_policy(reg):
+    final = {"summary": "s", "recommended_actions": ["isolate_host"],
+             "rationale": "r", "risks": [], "evidence_ids": []}
+    llm = ScriptedLLM([
+        {"tool": "get_policy", "args": {"incident_type": "powershell"}},
+        final,
+    ])
+    r = ReasoningAgent("A5", llm).run({}, registry=reg)
+    assert r.ok and r.tool_calls == 1
+    assert "isolate_host" in llm.prompts[1]
