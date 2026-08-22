@@ -83,6 +83,30 @@ def _make_store():
     return InMemoryStore()
 
 
+def _synthetic_events(host: str):
+    """Canned telemetry matching the slice story (Word -> encoded PS -> C2)."""
+
+    from aegis.tools.telemetry import TelemetryEvent
+
+    return [
+        TelemetryEvent(
+            event_id="1", channel="sysmon", action="ProcessCreate", host=host,
+            process_name="powershell.exe", process_pid="1000",
+            process_parent="WINWORD.EXE", command_line="powershell -enc SQBFAFA7AFIA",
+        ),
+        TelemetryEvent(
+            event_id="3", channel="sysmon", action="NetworkConnect", host=host,
+            process_name="powershell.exe", process_pid="1000",
+            destination_ip="185.220.101.4", destination_port="443",
+        ),
+        TelemetryEvent(
+            event_id="11", channel="sysmon", action="FileCreate", host=host,
+            process_name="powershell.exe", process_pid="1000",
+            file_path="C:\\ProgramData\\payload.dll",
+        ),
+    ]
+
+
 def run_slice(host: str = "win-vm", llm_mode: str = "real",
               confidence: float = 0.95, evidence_count: int = 4,
               max_retries: int = 2, telemetry_mode: str = "synthetic") -> dict:
@@ -158,6 +182,7 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
                 f"confidence={t['confidence']} category={t['category']} source={t['source']}"
             )
         tool_calls["A4"] = "\n".join(ti_rows) or "(no network indicators found)"
+        evidence_events = list(proc_tree) + list(net)
     else:
         # canned synthetic results so A2-A4 have evidence context
         tool_calls["A2"] = (
@@ -166,6 +191,13 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
         tool_calls["A4"] = (
             "lookup_ip(185.220.101.4): known_malicious=True confidence=0.95 category=c2"
         )
+        evidence_events = _synthetic_events(host)
+
+    # persist evidence records (activates correlation + D-008 linking later)
+    from aegis.incidents.evidence import evidence_from_tool_result
+
+    for ev in evidence_from_tool_result(inc.id, "read_tools", evidence_events):
+        store.add_evidence(ev)
 
     # multi-alert correlation (Phase 7): shared IOCs across prior incidents
     from aegis.intel.correlation import find_related
@@ -237,7 +269,8 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
         orch.transition(inc.id, IncidentState.INVESTIGATING, "orchestrator", "reopen")
 
     return {"incident": store.get(inc.id), "steps": steps, "decision": decision,
-            "verifications": verifications,
+            "verifications": verifications, "related": related,
+            "evidence_count": len(evidence_events),
             "trace": [t.to_state.value for t in store.transitions(inc.id)]}
 
 
@@ -255,6 +288,9 @@ if __name__ == "__main__":
                     telemetry_mode=args.telemetry)
     print(f"final state: {res['incident'].state.value}")
     print(f"trace: {' -> '.join(res['trace'])}")
+    print(f"evidence persisted: {res.get('evidence_count', 0)}")
+    for r in res.get("related", []):
+        print(f"related: {r['incident_id']} shares {', '.join(r['shared'])}")
     if "decision" in res:
         print(f"policy: {res['decision'].decision.value} ({res['decision'].reason})")
     for v in res.get("verifications", []):

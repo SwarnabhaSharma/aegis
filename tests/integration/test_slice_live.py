@@ -36,3 +36,26 @@ def test_slice_real_telemetry_missing_host_raises():
     with pytest.raises(RuntimeError, match="no process-create events"):
         run_slice(host="no-such-host", llm_mode="fake",
                   telemetry_mode="real")
+
+
+def test_slice_es_mode_correlates_across_runs():
+    """Two ES-store runs share IOC 185.220.101.4 -> second sees first."""
+    import os
+    import sys
+
+    sys.path.insert(0, "scripts")
+    from run_slice import run_slice
+
+    from aegis.incidents.schema import IncidentState
+
+    os.environ["AEGIS_STORE"] = "es"
+    try:
+        r1 = run_slice(host="win-vm", llm_mode="fake", telemetry_mode="synthetic")
+        r2 = run_slice(host="win-vm", llm_mode="fake", telemetry_mode="synthetic")
+    finally:
+        os.environ.pop("AEGIS_STORE", None)
+    assert r1["incident"].state == IncidentState.RESOLVED
+    assert r2["incident"].state == IncidentState.RESOLVED
+    assert r2["evidence_count"] >= 3
+    related_ids = {r["incident_id"] for r in r2["related"]}
+    assert r1["incident"].id in related_ids
