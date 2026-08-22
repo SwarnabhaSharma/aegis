@@ -72,10 +72,21 @@ def _fake_llm():
     return Fake()
 
 
+def _make_store():
+    import os
+
+    if os.getenv("AEGIS_STORE") == "es":
+        from aegis.incidents.es_store import ElasticsearchStore
+
+        es, _ = _live_telemetry()
+        return ElasticsearchStore(es)
+    return InMemoryStore()
+
+
 def run_slice(host: str = "win-vm", llm_mode: str = "real",
               confidence: float = 0.95, evidence_count: int = 4,
               max_retries: int = 2, telemetry_mode: str = "synthetic") -> dict:
-    store = InMemoryStore()
+    store = _make_store()
     orch = Orchestrator(store)
     ex = SimulatedExecutor()
     vf = SimulatedVerifier(ex, max_retries=max_retries)
