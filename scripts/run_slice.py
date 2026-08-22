@@ -1,4 +1,8 @@
-"""E2E PowerShell slice runner (Phases 1-6, in-memory, ponytail)."""
+"""E2E PowerShell slice runner (Phases 1-6, in-memory, ponytail).
+
+--telemetry synthetic : canned tool results (offline, default)
+--telemetry real      : seed event + read tools against live ES winlogbeat
+"""
 
 import argparse
 import sys
@@ -14,6 +18,34 @@ from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
 from aegis.policies.engine import Decision, evaluate
 from aegis.verifier.verifier import SimulatedVerifier
+
+
+def _live_telemetry():
+    from elasticsearch import Elasticsearch
+
+    from aegis.config import get_settings
+    from aegis.tools.es_telemetry import ElasticsearchTelemetry
+
+    s = get_settings()
+    es = Elasticsearch(
+        s.es_host, basic_auth=(s.es_user, s.es_password),
+        verify_certs=s.es_verify_certs, request_timeout=60,
+    )
+    return es, ElasticsearchTelemetry(es)
+
+
+def _fmt_events(events, n=8) -> str:
+    rows = []
+    for e in events[:n]:
+        row = f"ev{e.event_id} {e.process_name or e.action} pid={e.process_pid}"
+        if e.process_parent:
+            row += f" parent={e.process_parent}"
+        if e.command_line:
+            row += f" cmd={e.command_line[:80]}"
+        if e.destination_ip:
+            row += f" -> {e.destination_ip}:{e.destination_port}"
+        rows.append(row)
+    return "\n".join(rows) or "(no events)"
 
 
 def _fake_llm():
@@ -42,7 +74,7 @@ def _fake_llm():
 
 def run_slice(host: str = "win-vm", llm_mode: str = "real",
               confidence: float = 0.95, evidence_count: int = 4,
-              max_retries: int = 2) -> dict:
+              max_retries: int = 2, telemetry_mode: str = "synthetic") -> dict:
     store = InMemoryStore()
     orch = Orchestrator(store)
     ex = SimulatedExecutor()
@@ -57,24 +89,73 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
 
     pipe = AgentPipeline(llm)
 
+    # telemetry mode: real seeds the incident from an actual ES event and
+    # feeds agents through the production ToolRegistry read tools.
+    es = tel = None
+    seed = None
+    if telemetry_mode == "real":
+        es, tel = _live_telemetry()
+        candidates = tel.search_events(host=host, event_id="1", limit=5)
+        if not candidates:
+            raise RuntimeError(f"no process-create events for host {host!r} in ES")
+        seed = next((e for e in candidates if e.command_line), candidates[0])
+
     # 1. ingest -> NEW
-    inc = ingest_alert(store, source="synthetic",
-                       fields={"severity": "high", "host": host,
-                               "process": "powershell.exe -enc SQBFAFA7AFIA",
-                               "parent": "WINWORD.EXE"},
-                       incident_type="powershell")
+    alert_fields = {"severity": "high", "host": host}
+    summary_text = f"Word spawns encoded PowerShell on {host}"
+    if seed is not None:
+        alert_fields.update({
+            "process": seed.process_name, "pid": seed.process_pid,
+            "parent": seed.process_parent, "command_line": seed.command_line,
+            "observed_at": seed.ts.isoformat(),
+        })
+        summary_text = (
+            f"{seed.process_parent or 'unknown parent'} spawned "
+            f"{seed.process_name} (pid {seed.process_pid}) on {host} at "
+            f"{seed.ts.isoformat()}; cmd={seed.command_line[:120]}"
+        )
+    inc = ingest_alert(store, source="winlogbeat" if seed else "synthetic",
+                       fields=alert_fields, incident_type="powershell")
     orch.transition(inc.id, IncidentState.TRIAGING, "orchestrator", "slice start")
 
     # 2. pipeline A1-A5 (each drives one state step in O.2)
     incident_summary = {"incident_id": inc.id, "host": host,
                         "type": "powershell",
-                        "summary": f"Word spawns encoded PowerShell on {host}"}
+                        "summary": summary_text}
     tool_calls = {a: "" for a in ["A1", "A2", "A3", "A4", "A5"]}
-    # feed synthetic tool results so A2-A4 have evidence context
-    tool_calls["A2"] = f"get_process_tree({host}): WINWORD->powershell; evidence_count={evidence_count}"
-    tool_calls["A4"] = f"lookup_ip 185.220.101.4 malicious; confidence={confidence}"
+
+    if seed is not None:
+        from aegis.tools.registry import build_read_tools
+        reg = build_read_tools(tel)
+        proc_tree = reg.call("get_process_tree", "A2", host=host)
+        net = reg.call("get_network_connections", "A2", host=host)
+        evidence_count = len(proc_tree) + len(net)
+        tool_calls["A2"] = (
+            f"get_process_tree({host}):\n{_fmt_events(proc_tree)}\n"
+            f"get_network_connections({host}):\n{_fmt_events(net)}"
+        )
+        tool_calls["A3"] = f"process-create events for {host}:\n{_fmt_events(proc_tree[:6])}"
+        ips: list[str] = []
+        for e in net:
+            if e.destination_ip and e.destination_ip not in ips:
+                ips.append(e.destination_ip)
+        ti_rows = []
+        for ip in ips[:3]:
+            ti = reg.call("lookup_ip", "A4", ip=ip)
+            ti_rows.append(
+                f"lookup_ip({ip}): known_malicious={ti['known_malicious']} source={ti['source']}"
+            )
+        tool_calls["A4"] = "\n".join(ti_rows) or "(no network indicators found)"
+    else:
+        # canned synthetic results so A2-A4 have evidence context
+        tool_calls["A2"] = (
+            f"get_process_tree({host}): WINWORD->powershell; evidence_count={evidence_count}"
+        )
+        tool_calls["A4"] = f"lookup_ip 185.220.101.4 malicious; confidence={confidence}"
 
     steps, results = pipe.run(incident_summary, tool_calls)
+    if es is not None:
+        es.close()
 
     # fail-safe: any degraded -> ESCALATED
     if any(not s.ok for s in steps):
@@ -132,13 +213,16 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--host", default="win-vm")
+    ap.add_argument("--host", default=None)
     ap.add_argument("--llm", choices=["real", "fake"], default="real")
+    ap.add_argument("--telemetry", choices=["synthetic", "real"], default="synthetic")
     ap.add_argument("--confidence", type=float, default=0.95)
     ap.add_argument("--evidence-count", type=int, default=4)
     args = ap.parse_args()
-    res = run_slice(host=args.host, llm_mode=args.llm,
-                    confidence=args.confidence, evidence_count=args.evidence_count)
+    host = args.host or ("swarnabhasharma" if args.telemetry == "real" else "win-vm")
+    res = run_slice(host=host, llm_mode=args.llm,
+                    confidence=args.confidence, evidence_count=args.evidence_count,
+                    telemetry_mode=args.telemetry)
     print(f"final state: {res['incident'].state.value}")
     print(f"trace: {' -> '.join(res['trace'])}")
     if "decision" in res:
