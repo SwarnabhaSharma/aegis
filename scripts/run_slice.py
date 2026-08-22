@@ -152,9 +152,10 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
                 ips.append(e.destination_ip)
         ti_rows = []
         for ip in ips[:3]:
-            ti = reg.call("lookup_ip", "A4", ip=ip)
+            t = reg.call("lookup_ip", "A4", ip=ip)
             ti_rows.append(
-                f"lookup_ip({ip}): known_malicious={ti['known_malicious']} source={ti['source']}"
+                f"lookup_ip({ip}): known_malicious={t['known_malicious']} "
+                f"confidence={t['confidence']} category={t['category']} source={t['source']}"
             )
         tool_calls["A4"] = "\n".join(ti_rows) or "(no network indicators found)"
     else:
@@ -162,7 +163,25 @@ def run_slice(host: str = "win-vm", llm_mode: str = "real",
         tool_calls["A2"] = (
             f"get_process_tree({host}): WINWORD->powershell; evidence_count={evidence_count}"
         )
-        tool_calls["A4"] = f"lookup_ip 185.220.101.4 malicious; confidence={confidence}"
+        tool_calls["A4"] = (
+            "lookup_ip(185.220.101.4): known_malicious=True confidence=0.95 category=c2"
+        )
+
+    # multi-alert correlation (Phase 7): shared IOCs across prior incidents
+    from aegis.intel.correlation import find_related
+
+    related = find_related(store, inc.id)
+    corr_text = "\n".join(
+        f"{r['incident_id']} shares: {', '.join(r['shared'])}" for r in related
+    ) or "(no related incidents)"
+    tool_calls["A3"] = f"{tool_calls['A3']}\ncorrelation across incidents:\n{corr_text}"
+
+    # ATT&CK keyword candidates (Phase 7) for A4
+    from aegis.intel import attack as attack_intel
+
+    cand = attack_intel.match_keywords(f"{summary_text} {alert_fields.get('command_line', '')}")
+    atk_text = "; ".join(f"{c['id']} {c['name']} [{c['tactic']}]" for c in cand) or "(none)"
+    tool_calls["A4"] = f"{tool_calls['A4']}\nATT&CK keyword candidates: {atk_text}"
 
     steps, results = pipe.run(incident_summary, tool_calls)
     if es is not None:

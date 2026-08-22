@@ -7,6 +7,7 @@ added in Phases 5-6, restricted to D1/D2.
 
 from dataclasses import dataclass
 
+from aegis.intel import ti
 from aegis.policies.store import get_policy_for
 from aegis.tools.telemetry import TelemetrySource
 
@@ -15,12 +16,7 @@ LOW = "LOW"
 MEDIUM = "MEDIUM"
 HIGH = "HIGH"
 
-# Known-malicious IOCs for TI mock (Phase 2 placeholder; TI source later phase)
-_KNOWN_BAD: dict[str, bool] = {
-    "185.220.101.4": True,
-    "91.240.118.247": True,
-    "45.155.205.233": True,
-}
+# ponytail: _KNOWN_BAD retired — intel/ti.py local-intel-v2 store replaces it
 
 # Phase C G.1: agents A1..A5
 AGENT_TRIAGE = "A1"
@@ -173,9 +169,23 @@ def build_read_tools(telemetry: TelemetrySource) -> ToolRegistry:
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT, AGENT_INVESTIGATION},
-        func=lambda ip: {
-            "ip": ip, "known_malicious": _KNOWN_BAD.get(ip, False), "source": "mock-ti"
-        },
+        func=lambda ip: ti.lookup(ip),
+    ))
+    reg.register(Tool(
+        name="lookup_hash",
+        schema_in={"value": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_THREAT},
+        func=lambda value: ti.lookup(value),
+    ))
+    reg.register(Tool(
+        name="lookup_domain",
+        schema_in={"value": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_THREAT},
+        func=lambda value: ti.lookup(value),
     ))
     reg.register(Tool(
         name="get_policy",

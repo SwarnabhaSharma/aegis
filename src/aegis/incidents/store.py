@@ -40,6 +40,9 @@ class IncidentStore(abc.ABC):
     @abc.abstractmethod
     def timeline(self, incident_id: str) -> list[TimelineEntry]: ...
 
+    @abc.abstractmethod
+    def all_incident_ids(self) -> list[str]: ...
+
 
 class InMemoryStore(IncidentStore):
     """Thread-safe fake. Single-writer per incident via per-id lock."""
@@ -108,3 +111,6 @@ class InMemoryStore(IncidentStore):
 
     def timeline(self, incident_id: str) -> list[TimelineEntry]:
         return list(self._timeline.get(incident_id, []))
+
+    def all_incident_ids(self) -> list[str]:
+        return list(self._incidents.keys())

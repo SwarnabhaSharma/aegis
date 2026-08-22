@@ -156,3 +156,10 @@ class ElasticsearchStore(IncidentStore):
 
     def timeline(self, incident_id: str) -> list[TimelineEntry]:
         return self._steps(incident_id, "timeline", TimelineEntry)
+
+    def all_incident_ids(self) -> list[str]:
+        resp = self._es.search(
+            index=self._incidents_idx,
+            body={"query": {"match_all": {}}, "_source": ["id"], "size": 1000},
+        )
+        return [h["_source"]["id"] for h in resp["hits"]["hits"]]
