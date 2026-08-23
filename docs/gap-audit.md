@@ -1,7 +1,7 @@
 # Aegis Gap Audit — Living Tracker
 
 - **Source of truth**: `D:\Resume\Aegis — Master Project Architecture Prompt — Polished.md` (§3–§29)
-- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; T1 `bb18bd2`; **T2 controls+tools `81a600f`**)
+- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; T1 `bb18bd2`; T2 `81a600f`; **T3 minimal privacy `318f3e1`**)
 - **Legend**:
   - `PRESENT` — built, meets spec
   - `PARTIAL` — exists, below spec (notes name the delta)
@@ -83,17 +83,16 @@
 
 | Requirement | Status | Notes |
 |---|---|---|
-| PII detection | ABSENT | |
-| Secret/credential detection | ABSENT | |
-| Data classification engine | ABSENT | inert tag on Evidence only |
-| Redaction / tokenization | ABSENT | |
-| Field-level access control | ABSENT | |
-| Contextual minimization | ABSENT | agents see full context dict |
-| Four representations (raw/filtered/AI-visible/analyst-visible) | ABSENT | |
-| Auditable privacy decisions ("why received / why withheld") | ABSENT | audit fields reserved in schema |
-| Dimension analysis (field/role/agent/task/incident/asset/context) | ABSENT | |
-
-Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabilities above stay ABSENT until designed/built under T3.
+| PII detection | PRESENT (minimal) | email/SSN regex (`318f3e1`) |
+| Secret/credential detection | PRESENT (minimal) | credential kv / AWS keys / JWT / private-key headers (`318f3e1`) |
+| Data classification engine | PARTIAL | normal/pii/secret levels on Evidence at collection; richer taxonomy pending |
+| Redaction | PRESENT (minimal) | [REDACTED:kind] masking before AI-visible views (`318f3e1`) |
+| Tokenization | ABSENT | deferred (ADR-003 sequencing) |
+| Field-level access control | PARTIAL | per-tool AI-visible dict allowlist + withheld-keys report; role-based views pending |
+| Contextual minimization | ABSENT | task-based minimization pending |
+| Four representations (raw/filtered/AI-visible/analyst-visible) | PARTIAL | raw + AI-visible distinct (`318f3e1`); privacy-filtered store representation pending |
+| Auditable privacy decisions ("why received / why withheld") | PRESENT (minimal) | privacy_redaction audit events with where/kinds/reason (`318f3e1`) |
+| Dimension analysis (field/role/agent/task/incident/asset/context) | ABSENT | documented design question, Phase 8 |
 
 ## §11 Agent data/action permissions
 
@@ -216,7 +215,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Requirement | Status | Notes |
 |---|---|---|
 | PowerShell slice end-to-end | PRESENT | CLI + API + tests; real telemetry + real Ornith verified |
-| Privacy filtering step in slice flow | ABSENT | gated on §10 (T3) |
+| Privacy filtering step in slice flow | PRESENT | classification at collection + redaction before AI views (`318f3e1`) |
 | Executor realism | DEFERRED (ADR-013) | simulated until real backend phase |
 
 ## §28 UX console
@@ -245,7 +244,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 |---|---|---|---|
 | T1 Security hardening | telemetry-as-untrusted defense; evidence_ids validation; audit pipeline (#4+#5); version manifest | §15, §14(D-008), §18, §19(partial), §21 | **DONE `bb18bd2`** — #4, #5, #6 closed (Approval/ResponseAction records + hash chain remain) |
 | T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | **DONE `81a600f`** — #7, #8(core), #11 closed (disable_account + timeout enforcement remain) |
-| T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | #9 (asset map folds into classification context) — NEXT |
+| T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | **DONE `318f3e1`** — #9 (asset map) remains, folds into T4 context work |
 | T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | #12 doc note |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
