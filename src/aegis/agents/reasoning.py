@@ -96,8 +96,12 @@ class AgentResult:
     tool_calls: int = 0
 
 
-def _fmt_observation(obs) -> str:
-    """Compact text view of a tool result for the next prompt (as untrusted data)."""
+def _fmt_observation(obs, tool: str = "") -> str:
+    """Compact text view of a tool result for the next prompt (as untrusted
+    data). Privacy §10: secrets/PII redacted; dict allowlist applied."""
+    from aegis.privacy import ai_visible, redact
+
+    obs = ai_visible(tool, obs)
     if isinstance(obs, list):
         rows = []
         for e in obs[:6]:
@@ -106,18 +110,23 @@ def _fmt_observation(obs) -> str:
                 if e.process_parent:
                     row += f" parent={e.process_parent}"
                 if e.command_line:
-                    row += f" cmd={e.command_line[:80]}"
+                    masked, _ = redact(e.command_line[:80])
+                    row += f" cmd={masked}"
                 if e.destination_ip:
                     row += f" -> {e.destination_ip}:{e.destination_port}"
                 if e.file_path:
-                    row += f" file={e.file_path}"
+                    masked, _ = redact(e.file_path)
+                    row += f" file={masked}"
                 rows.append(row)
             else:
-                rows.append(str(e)[:160])
+                masked, _ = redact(str(e)[:160])
+                rows.append(masked)
         return untrusted("\n".join(rows) or "(empty)")
     if isinstance(obs, dict):
-        return untrusted(json.dumps(obs, default=str)[:400])
-    return untrusted(str(obs)[:400])
+        masked, _ = redact(json.dumps(obs, default=str)[:400])
+        return untrusted(masked)
+    masked, _ = redact(str(obs)[:400])
+    return untrusted(masked)
 
 
 class ReasoningAgent:
@@ -182,7 +191,7 @@ class ReasoningAgent:
                 observations.append(f"{name}: ERROR ({e})")
                 continue
             used += 1
-            observations.append(f"{name}({args}):\n{_fmt_observation(obs)}")
+            observations.append(f"{name}({args}):\n{_fmt_observation(obs, tool=name)}")
         return AgentResult(
             self.agent_id, ok=False, data={}, degraded=True,
             error="tool-step budget exceeded before final answer", tool_calls=used,

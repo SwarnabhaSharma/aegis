@@ -31,18 +31,31 @@ class TimelineEntry(BaseModel):
 
 
 def evidence_from_tool_result(incident_id: str, tool: str, events: list) -> list[Evidence]:
+    from aegis.privacy import classification_level, detect
+
     def _raw_ref(e) -> str:
         if not getattr(e, "raw", None):
             return ""
         rid = e.raw.get("winlog", {}).get("record_id", "")
         return str(rid) if rid else ""
 
-    return [
-        Evidence(
+    def _privacy(e) -> tuple[str, dict]:
+        """§27 privacy-filtering step: classify each evidence record."""
+        kinds: set[str] = set()
+        for val in (e.command_line, e.file_path, e.user):
+            kinds.update(detect(val or ""))
+        level = classification_level(sorted(kinds)) if kinds else "normal"
+        return level, ({"kinds": sorted(kinds)} if kinds else {})
+
+    out = []
+    for e in events:
+        level, meta = _privacy(e)
+        ev = Evidence(
             incident_id=incident_id,
             source=f"tool:{tool}",
             collection_method=tool,
             raw_ref=_raw_ref(e),
+            classification=level,
             data={
                 "host": e.host,
                 "event_id": e.event_id,
@@ -54,5 +67,7 @@ def evidence_from_tool_result(incident_id: str, tool: str, events: list) -> list
                 "file_path": e.file_path,
             },
         )
-        for e in events
-    ]
+        if meta:
+            ev.data["_privacy"] = meta
+        out.append(ev)
+    return out

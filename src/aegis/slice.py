@@ -136,7 +136,12 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     from aegis.audit import version_manifest
     from aegis.intel import attack as attack_intel
     from aegis.intel.correlation import find_related
+    from aegis.privacy import redact as privacy_redact
     from aegis.tools.registry import TOOL_SCHEMA_VERSION
+
+    def untrusted_privacy(text: str) -> tuple[str, list[str]]:
+        """§27 privacy-filtering step: mask secrets/PII before AI-visible views."""
+        return privacy_redact(text)
 
     orch = Orchestrator(store)
     inc = store.get(inc_id)
@@ -144,17 +149,20 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     orch.transition(inc_id, IncidentState.TRIAGING, "orchestrator", "slice start")
 
     summary_text = f"Incident type {inc.type} on {host}"
+    cmd_kinds: list[str] = []
     if seed is not None:
+        masked_cmd, cmd_kinds = untrusted_privacy(seed.command_line[:120])
         summary_text = (
             f"{seed.process_parent or 'unknown parent'} spawned "
             f"{seed.process_name} (pid {seed.process_pid}) on {host} at "
-            f"{seed.ts.isoformat()}; cmd={untrusted(seed.command_line[:120])}"
+            f"{seed.ts.isoformat()}; cmd={untrusted(masked_cmd)}"
         )
     elif inc.fields.get("command_line"):
+        masked_cmd, cmd_kinds = untrusted_privacy(str(inc.fields["command_line"])[:120])
         summary_text = (
             f"{inc.fields.get('parent', 'unknown parent')} spawned "
             f"{inc.fields.get('process', 'unknown process')} on {host}; "
-            f"cmd={untrusted(str(inc.fields['command_line'])[:120])}"
+            f"cmd={untrusted(masked_cmd)}"
         )
 
     # evidence: prefetch through the registry (agentic mode agents also fetch
@@ -179,6 +187,10 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         for pat in set(injection_flags):
             audit.record("injection_flag", inc_id, actor="telemetry",
                          pattern=pat)
+        if cmd_kinds:
+            audit.record("privacy_redaction", inc_id, actor="privacy_gateway",
+                         where="incident_summary", kinds=cmd_kinds,
+                         reason="secrets/PII masked before AI-visible view")
 
     related = find_related(store, inc_id)
     corr_text = "\n".join(
