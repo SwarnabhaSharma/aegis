@@ -1,7 +1,7 @@
 # Aegis Gap Audit — Living Tracker
 
 - **Source of truth**: `D:\Resume\Aegis — Master Project Architecture Prompt — Polished.md` (§3–§29)
-- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; T1 `bb18bd2`; T2 `81a600f`; **T3 minimal privacy `318f3e1`**)
+- **Audit date**: 2026-08-23 (baseline `c53d00b`; T1 `bb18bd2`; T2 `81a600f`; T3 `318f3e1`; **T4 eval+portfolio `b19e0e5`+`c4df273`**)
 - **Legend**:
   - `PRESENT` — built, meets spec
   - `PARTIAL` — exists, below spec (notes name the delta)
@@ -188,9 +188,9 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Reproducible corpus (TP/FP/ambiguous/injection/multi-stage…) | ABSENT | T4; synthetic generator extensible |
-| Metrics (detection/investigation/AI-reliability/security/response/efficiency) | ABSENT | T4 |
-| Deterministic-baseline comparison | ABSENT | T4 optional |
+| Reproducible corpus | PRESENT | evals/corpus.json: 6 labeled scenarios incl. telemetry-injection (`b19e0e5`); multi-stage corpus growth pending |
+| Metrics runner | PRESENT | scripts/run_eval.py: precision/recall on investigate decision, unsafe-action count, injection detection, escalation + fabrication rates -> json+md reports; live Ornith run: P=1.0 R=1.0 FP=0 (`b19e0e5`) |
+| Deterministic-baseline comparison | ABSENT | optional stretch, remains open |
 
 ## §21 Versioning & reproducibility
 
@@ -208,7 +208,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 |---|---|---|
 | Tests incl. error/unauthorized cases per feature | PRESENT | 75 tests |
 | Written per-feature DoD before implementation | ABSENT | process change, adopt from T1 onward |
-| Audit-event generation asserted in tests | ABSENT | blocked on #4 |
+| Audit-event generation asserted in tests | PARTIAL | recorder unit-tested; slice-level assertion pending |
 
 ## §27 First vertical slice
 
@@ -229,12 +229,12 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Requirement | Status | Notes |
 |---|---|---|
 | Documentation set (ADRs/assumptions/phases) | PRESENT | docs/ |
-| README.md | ABSENT | T4 |
-| Architecture diagrams | ABSENT | T4 |
-| Threat model document | ABSENT | T4 (§15 analysis feeds it) |
-| CI pipeline | ABSENT | T4 |
-| Packaged demo scenarios + reproducible evaluation | ABSENT | T4 |
-| Limitations/trade-offs explained | PARTIAL | scattered in ADRs/docs; consolidate in T4 README |
+| README.md | PRESENT | quickstart/env/API/limitations (`c4df273`) |
+| Architecture diagrams | PRESENT | docs/diagrams.md mermaid set (`c4df273`) |
+| Threat model document | PRESENT | docs/threat-model.md assets/threats/mitigations/residuals (`c4df273`) |
+| CI pipeline | PRESENT | GitHub Actions ruff+pytest (`b19e0e5`) |
+| Packaged demo scenarios + reproducible evaluation | PRESENT | run_slice.py modes + evals/ runner+reports (`b19e0e5`) |
+| Limitations/trade-offs explained | PRESENT | README limitations section + threat-model residuals + gap-audit itself |
 
 ---
 
@@ -245,7 +245,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | T1 Security hardening | telemetry-as-untrusted defense; evidence_ids validation; audit pipeline (#4+#5); version manifest | §15, §14(D-008), §18, §19(partial), §21 | **DONE `bb18bd2`** — #4, #5, #6 closed (Approval/ResponseAction records + hash chain remain) |
 | T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | **DONE `81a600f`** — #7, #8(core), #11 closed (disable_account + timeout enforcement remain) |
 | T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | **DONE `318f3e1`** — #9 (asset map) remains, folds into T4 context work |
-| T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | #12 doc note |
+| T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | **DONE `b19e0e5`+`c4df273`** — #12 closed (console UI views remain §28 backlog) |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
 
