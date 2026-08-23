@@ -1,7 +1,7 @@
 # Aegis Gap Audit — Living Tracker
 
 - **Source of truth**: `D:\Resume\Aegis — Master Project Architecture Prompt — Polished.md` (§3–§29)
-- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; **T1 security hardening applied `bb18bd2`**)
+- **Audit date**: 2026-08-22 (baseline post Phase 0–7 `c53d00b`; T1 `bb18bd2`; **T2 controls+tools `81a600f`**)
 - **Legend**:
   - `PRESENT` — built, meets spec
   - `PARTIAL` — exists, below spec (notes name the delta)
@@ -56,13 +56,13 @@
 | Item | Status | Notes |
 |---|---|---|
 | search_events / get_process_tree / get_network_connections | PRESENT | ES + in-memory backends |
-| get_file_activity | ABSENT | named in slice flow O.2 |
-| get_authentication_events / get_host_details | ABSENT | spec investigation tools |
+| get_file_activity | PRESENT | Sysmon 11; ES + in-memory (`81a600f`) |
+| get_authentication_events / get_host_details | PRESENT | Security-channel logons + per-host aggregation (`81a600f`) |
 | lookup_ip / domain / hash | PRESENT | rich TI shape |
 | get_threat_intelligence | ABSENT | aggregate intel tool |
 | isolate_host | PRESENT | idempotent, simulated backend |
-| terminate_process / block_indicator / disable_account / remove_persistence | ABSENT | response set (#11) |
-| verify_host_isolated / process_terminated / indicator_blocked / persistence_removed | PRESENT (code) | 3 of 4 can never pass naturally until producers exist (#11) |
+| terminate_process / block_indicator / disable_account / remove_persistence | PARTIAL | terminate/block/remove built + verified (`81a600f`); disable_account pending (needs Identity entity) |
+| verify_host_isolated / process_terminated / indicator_blocked / persistence_removed | PRESENT | all reachable — executor produces state, verifier reads it (`81a600f`, #11 closed) |
 | Typed input schema | PRESENT | loose dict types |
 | Typed output schema | ABSENT | not declared on Tool |
 | Authorization + permitted agents | PRESENT | registry-enforced gate |
@@ -77,7 +77,7 @@
 
 | Requirement | Status | Notes |
 |---|---|---|
-| Registry + state machine + policy as controls | PRESENT | executor still called direct in slice tail (#7) |
+| Registry + state machine + policy as controls | PRESENT | execution routed through registry gate (`81a600f`, #7 closed) |
 
 ## §10 Privacy architecture
 
@@ -145,8 +145,9 @@ Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabili
 
 | Requirement | Status | Notes |
 |---|---|---|
-| isolate_host full safety profile | PRESENT | risk/reversibility/idempotency/verify/failure-path |
-| Structured ActionSpec (expected result/rollback/timeout/failure→escalation) for all actions | ABSENT | #8 |
+| isolate_host full safety profile | PRESENT | ActionSpec on tool (`81a600f`) |
+| terminate_process / block_indicator full safety profile | PRESENT | ActionSpec: expected/verify/rollback/failure (`81a600f`) |
+| Structured ActionSpec (expected result/rollback/timeout/failure→escalation) for all actions | PARTIAL | response tools spec'd; timeout enforcement + read-tool specs pending |
 | "HTTP 200 ≠ success" | PRESENT | D2 independent verification |
 
 ## §17 Human override & emergency controls
@@ -154,13 +155,13 @@ Whole subsystem DEFERRED to Phase 8 sequencing (ADR-003) but individual capabili
 | Requirement | Status | Notes |
 |---|---|---|
 | Operator approve/deny | PRESENT | API endpoint + state machine gate |
-| Policy override fn | PARTIAL | exists in engine; no control surface endpoint |
-| Pause autonomy | ABSENT | T2 |
-| Disable individual agents | ABSENT | T2 |
-| Revoke tool permissions at runtime | ABSENT | T2 |
-| Require-approval-for-all mode | ABSENT | T2 |
-| Terminate active workflow | ABSENT | T2 |
-| Safe mode + restore | ABSENT | T2 |
+| Policy override fn | PARTIAL | engine fn exists; require-approval-all + control endpoints shipped (`81a600f`); per-decision force-override endpoint pending |
+| Pause autonomy | PRESENT | ControlState.pause + pipeline halt (`81a600f`) |
+| Disable individual agents | PRESENT | disabled_agents -> fail-safe stop at stage (`81a600f`) |
+| Revoke tool permissions at runtime | PRESENT | revoked_tools checked in registry.call (`81a600f`) |
+| Require-approval-for-all mode | PRESENT | flips ALLOW->APPROVE pre-transition (`81a600f`) |
+| Terminate active workflow | PARTIAL | pause covers new runs; mid-run cancellation pending (async execution) |
+| Safe mode + restore | PRESENT | enter_safe_mode/restore_normal (`81a600f`) |
 
 ## §18 Observability & audit
 
@@ -243,8 +244,8 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Tier | Scope | Closes sections | Debt ids retired |
 |---|---|---|---|
 | T1 Security hardening | telemetry-as-untrusted defense; evidence_ids validation; audit pipeline (#4+#5); version manifest | §15, §14(D-008), §18, §19(partial), §21 | **DONE `bb18bd2`** — #4, #5, #6 closed (Approval/ResponseAction records + hash chain remain) |
-| T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | #7, #8, #11 — NEXT |
-| T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | #9 (asset map folds into classification context) |
+| T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | **DONE `81a600f`** — #7, #8(core), #11 closed (disable_account + timeout enforcement remain) |
+| T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | #9 (asset map folds into classification context) — NEXT |
 | T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | #12 doc note |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
