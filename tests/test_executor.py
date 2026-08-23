@@ -53,4 +53,4 @@ def test_unknown_tool_rejected():
     ex = SimulatedExecutor()
     reg = build_response_tools(ex)
     with pytest.raises(KeyError):
-        reg.call("terminate_process", "D1", host="win-vm", incident_id="inc-1")
+        reg.call("nonexistent_action", "D1", host="win-vm", incident_id="inc-1")

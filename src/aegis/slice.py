@@ -7,6 +7,7 @@ run_full_slice(): investigate + simulated execute/verify tail (CLI/tests).
 """
 
 import os
+from dataclasses import replace
 
 from aegis.agents.pipeline import AgentPipeline
 from aegis.executor.executor import SimulatedExecutor
@@ -76,12 +77,12 @@ def live_telemetry():
     return es, ElasticsearchTelemetry(es)
 
 
-def build_registry():
+def build_registry(controls=None):
     """Production read-tool registry backed by live winlogbeat telemetry."""
     from aegis.tools.registry import build_read_tools
 
     es, tel = live_telemetry()
-    return es, build_read_tools(tel)
+    return es, build_read_tools(tel, controls=controls)
 
 
 def _synthetic_events(host: str):
@@ -124,10 +125,11 @@ def _fmt_events(events, n=8) -> str:
 
 def investigate(store, inc_id: str, llm, registry=None, seed=None,
                 confidence_floor: float = 0.95,
-                audit=None) -> dict:
+                audit=None, controls=None) -> dict:
     """Drive TRIAGING -> RESPONSE_PLANNED -> policy decision. Shared core.
 
     audit: AuditRecorder or None (memory-only capture when None).
+    controls: ControlState (§17) or None (unrestricted).
     """
     from aegis.agents.reasoning import PROMPT_VERSION, detect_injection, untrusted
     from aegis.agents.validation import validate_evidence
@@ -194,7 +196,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         "A5": "",
     }
 
-    pipe = AgentPipeline(llm, registry=registry)
+    pipe = AgentPipeline(llm, registry=registry, controls=controls)
     steps, results = pipe.run(
         {"incident_id": inc_id, "host": host, "type": inc.type,
          "summary": summary_text},
@@ -243,6 +245,13 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     facts = {"host": host, "confidence": confidence,
              "evidence_count": len(evidence_events)}
     decision = evaluate("isolate_host", facts)
+
+    # §17 require-approval-for-all: even policy-ALLOW goes to the human gate
+    if (controls is not None and controls.require_approval_all
+            and decision.decision == Decision.ALLOW):
+        decision = replace(decision, decision=Decision.APPROVE,
+                           reason=f"{decision.reason}; operator requires approval for all actions")
+
     if audit is not None:
         audit.record("policy_decision", inc_id, actor="policy_engine",
                      action=decision.action, decision=decision.decision.value,
@@ -276,14 +285,21 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
 
 
 def execute_and_verify(store, inc_id: str, host: str,
-                       max_retries: int = 2) -> list:
-    """AUTHORIZED -> EXECUTING -> VERIFYING -> RESOLVED | ESCALATED."""
+                       max_retries: int = 2, controls=None) -> list:
+    """AUTHORIZED -> EXECUTING -> VERIFYING -> RESOLVED | ESCALATED.
+
+    Execution goes through the response-tool registry gate (#7): D1
+    authorization + operator revocations apply.
+    """
+    from aegis.tools.registry import build_response_tools
+
     orch = Orchestrator(store)
     ex = SimulatedExecutor()
     vf = SimulatedVerifier(ex, max_retries=max_retries)
+    reg = build_response_tools(ex, controls=controls)
 
     orch.transition(inc_id, IncidentState.EXECUTING, "orchestrator", "execute")
-    ex.isolate_host(host, inc_id)
+    reg.call("isolate_host", "D1", host=host, incident_id=inc_id)
     orch.transition(inc_id, IncidentState.VERIFYING, "orchestrator", "verify")
 
     verifications = []
@@ -304,13 +320,22 @@ def execute_and_verify(store, inc_id: str, host: str,
 
 def run_full_slice(host: str = "win-vm", llm_mode: str = "real",
                    confidence: float = 0.95, evidence_count: int = 4,
-                   max_retries: int = 2, telemetry_mode: str = "synthetic") -> dict:
+                   max_retries: int = 2, telemetry_mode: str = "synthetic",
+                   controls=None) -> dict:
     """Full PowerShell slice: NEW -> ... -> RESOLVED/FAILED/ESCALATED.
 
     evidence_count kept for CLI/test signature compat; real count derives
     from persisted events.
     """
     from aegis.audit import AuditRecorder
+    from aegis.controls import ControlState
+
+    if controls is None:
+        controls = ControlState.from_env()
+    if controls.autonomy_blocked():
+        return {"incident": None, "steps": [], "errors": [
+            "autonomy paused by operator (§17)"], "related": [],
+            "evidence_count": 0, "trace": []}
 
     llm = FakeLLM() if llm_mode == "fake" else _real_llm()
     reg = None
@@ -320,7 +345,7 @@ def run_full_slice(host: str = "win-vm", llm_mode: str = "real",
         from aegis.tools.registry import build_read_tools
 
         es, tel = live_telemetry()
-        reg = build_read_tools(tel)
+        reg = build_read_tools(tel, controls=controls)
         candidates = tel.search_events(host=host, event_id="1", limit=5)
         if not candidates:
             es.close()
@@ -346,7 +371,8 @@ def run_full_slice(host: str = "win-vm", llm_mode: str = "real",
                            fields=alert_fields, incident_type="powershell")
 
         res = investigate(store, inc.id, llm, registry=reg, seed=seed,
-                          confidence_floor=confidence, audit=audit_rec)
+                          confidence_floor=confidence, audit=audit_rec,
+                          controls=controls)
     finally:
         if es is not None:
             es.close()
@@ -369,7 +395,8 @@ def run_full_slice(host: str = "win-vm", llm_mode: str = "real",
         orch.transition(inc.id, IncidentState.AUTHORIZED,
                         "operator", "approved (slice)")
     out["verifications"] = execute_and_verify(store, inc.id, host,
-                                              max_retries=max_retries)
+                                              max_retries=max_retries,
+                                              controls=controls)
     out["trace"] = [t.to_state.value for t in store.transitions(inc.id)]
     return out
 

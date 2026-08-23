@@ -42,6 +42,15 @@ class TelemetrySource(abc.ABC):
     @abc.abstractmethod
     def get_network_connections(self, host: str, limit: int = 100) -> list[TelemetryEvent]: ...
 
+    @abc.abstractmethod
+    def get_file_activity(self, host: str, limit: int = 100) -> list[TelemetryEvent]: ...
+
+    @abc.abstractmethod
+    def get_authentication_events(self, host: str, limit: int = 100) -> list[TelemetryEvent]: ...
+
+    @abc.abstractmethod
+    def get_host_details(self, host: str) -> dict: ...
+
 
 class InMemoryTelemetry(TelemetrySource):
     """Fake telemetry for tests. Mirrors winlogbeat schema semantics."""
@@ -75,3 +84,26 @@ class InMemoryTelemetry(TelemetrySource):
     def get_network_connections(self, host: str, limit: int = 100) -> list[TelemetryEvent]:
         return [e for e in self._events
                 if e.host == host and e.event_id == "3"][:limit]
+
+    def get_file_activity(self, host: str, limit: int = 100) -> list[TelemetryEvent]:
+        return [e for e in self._events
+                if e.host == host and e.event_id == "11"][:limit]
+
+    def get_authentication_events(self, host: str, limit: int = 100) -> list[TelemetryEvent]:
+        return [e for e in self._events
+                if e.host == host and e.channel == "Security"
+                and e.event_id in ("4624", "4625", "4634", "4647", "4672")][:limit]
+
+    def get_host_details(self, host: str) -> dict:
+        events = [e for e in self._events if e.host == host]
+        if not events:
+            return {"host": host, "seen": False}
+        return {
+            "host": host,
+            "seen": True,
+            "first_seen": min(e.ts for e in events).isoformat(),
+            "last_seen": max(e.ts for e in events).isoformat(),
+            "event_count": len(events),
+            "channels": sorted({e.channel for e in events}),
+            "users": sorted({e.user for e in events if e.user}),
+        }

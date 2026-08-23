@@ -9,6 +9,7 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from aegis.audit import AuditRecorder
 from aegis.config import get_settings
 from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
@@ -39,13 +40,17 @@ def _make_store():
     return InMemoryStore()
 
 
-def create_app(store=None, llm=None) -> FastAPI:
+def create_app(store=None, llm=None, controls=None) -> FastAPI:
+    from aegis.controls import ControlState
+
     app = FastAPI(title="Aegis", version="0.1.0")
     st = store or _make_store()
     app.state.store = st  # exposed for tests/introspection
     orch = Orchestrator(st)
     settings = get_settings()
     default_llm = llm  # None -> construct per-call from settings
+    ctl = controls if controls is not None else ControlState.from_env()
+    app.state.controls = ctl
 
     def _get(incident_id: str):
         inc = st.get(incident_id)
@@ -84,7 +89,7 @@ def create_app(store=None, llm=None) -> FastAPI:
         audit_rec = None
         if st.__class__.__name__ == "ElasticsearchStore":
             try:
-                _, registry = sl.build_registry()
+                _, registry = sl.build_registry(controls=ctl)
             except Exception:
                 pass  # telemetry unreachable: single-shot fallback
             from aegis.audit import AuditRecorder
@@ -94,7 +99,7 @@ def create_app(store=None, llm=None) -> FastAPI:
             audit_rec.ensure_index()
         llm = default_llm or LLMClient(settings.llm_base_url, settings.llm_model)
         res = sl.investigate(st, incident_id, llm, registry=registry,
-                             audit=audit_rec)
+                             audit=audit_rec, controls=ctl)
         if not res["ok"]:
             raise HTTPException(status_code=502, detail={
                 "error": "pipeline degraded; escalated to human",
@@ -125,6 +130,46 @@ def create_app(store=None, llm=None) -> FastAPI:
         updated = orch.transition(incident_id, IncidentState.AUTHORIZED,
                                   "operator", "approved via api")
         return updated.model_dump()
+
+    @app.get("/controls")
+    def get_controls():
+        return {
+            "paused": ctl.paused,
+            "safe_mode": ctl.safe_mode,
+            "require_approval_all": ctl.require_approval_all,
+            "disabled_agents": sorted(ctl.disabled_agents),
+            "revoked_tools": sorted(ctl.revoked_tools),
+        }
+
+    @app.post("/controls/{action}")
+    def set_controls(action: str, target: str = ""):
+        """Operator emergency controls (§17). LLM-independent."""
+        if action == "pause":
+            ctl.pause()
+        elif action == "resume":
+            ctl.resume()
+        elif action == "disable_agent" and target:
+            ctl.disable_agent(target)
+        elif action == "enable_agent" and target:
+            ctl.enable_agent(target)
+        elif action == "revoke_tool" and target:
+            ctl.revoke_tool(target)
+        elif action == "restore_tool" and target:
+            ctl.restore_tool(target)
+        elif action == "require_approval_all":
+            ctl.require_approval_all = True
+        elif action == "allow_auto":
+            ctl.require_approval_all = False
+        elif action == "safe_mode":
+            ctl.enter_safe_mode()
+        elif action == "restore_normal":
+            ctl.restore_normal()
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown action: {action}")
+        is_es = st.__class__.__name__ == "ElasticsearchStore"
+        audit_rec = AuditRecorder(es=getattr(st, "_es", None) if is_es else None)
+        audit_rec.record("operator_control", actor="operator", action=action, target=target)
+        return get_controls()
 
     return app
 

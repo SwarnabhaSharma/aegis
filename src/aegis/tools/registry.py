@@ -44,14 +44,16 @@ class Tool:
     idempotent: bool = True
     audit: bool = True
     func: object = None
+    spec: dict | None = None  # §16 ActionSpec: expected/verify/rollback/failure
 
     def authorized(self, agent: str) -> bool:
         return agent in self.allowed_agents
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, controls=None) -> None:
         self._tools: dict[str, Tool] = {}
+        self.controls = controls  # ControlState; None = no runtime revocation
         self.calls: list[dict] = []  # every call attempt, ok or not (audit #4)
 
     def register(self, tool: Tool) -> None:
@@ -68,6 +70,8 @@ class ToolRegistry:
             tool = self._tools.get(name)
             if tool is None:
                 raise KeyError(f"unknown tool: {name}")
+            if self.controls is not None and name in self.controls.revoked_tools:
+                raise PermissionError(f"{name} revoked by operator")
             if not tool.authorized(agent):
                 raise PermissionError(f"{agent} not authorized for {name}")
             if tool.func is None:
@@ -83,13 +87,13 @@ class ToolRegistry:
         return [n for n, t in self._tools.items() if t.authorized(agent)]
 
 
-def build_verify_tools(verifier) -> ToolRegistry:
+def build_verify_tools(verifier, controls=None) -> ToolRegistry:
     """Verify tools (Phase 6). Restricted to D2/verifier."""
     from aegis.verifier.verifier import SimulatedVerifier
 
     if not isinstance(verifier, SimulatedVerifier):
         raise TypeError("verifier must be SimulatedVerifier")
-    reg = ToolRegistry()
+    reg = ToolRegistry(controls)
     reg.register(Tool(
         name="verify_host_isolated",
         schema_in={"host": str, "incident_id": str},
@@ -129,28 +133,62 @@ def build_verify_tools(verifier) -> ToolRegistry:
     return reg
 
 
-def build_response_tools(executor) -> ToolRegistry:
+def build_response_tools(executor, controls=None) -> ToolRegistry:
     """Response tools (Phase 5). Restricted to D1/executor — no reasoning agent may call."""
     from aegis.executor.executor import SimulatedExecutor  # local import avoids cycle
 
     if not isinstance(executor, SimulatedExecutor):
         raise TypeError("executor must be SimulatedExecutor")
-    reg = ToolRegistry()
+    reg = ToolRegistry(controls)
     reg.register(Tool(
         name="isolate_host",
-        schema_in={"host": str, "incident_id": str, "idempotency_key": str},
+        schema_in={"host": str, "incident_id": str},
         risk_class=HIGH,
         reversible=False,
         allowed_agents={"D1", "executor"},
+        spec={
+            "expected_result": "host no longer communicates with external network",
+            "verification_method": "verify_host_isolated",
+            "rollback": "not supported (manual unisolation)",
+            "failure_behavior": "REOPEN + escalate",
+        },
         func=lambda host, incident_id, idempotency_key=None: executor.isolate_host(
             host, incident_id, idempotency_key
         ),
     ))
+    reg.register(Tool(
+        name="terminate_process",
+        schema_in={"host": str, "pid": str, "incident_id": str},
+        risk_class=MEDIUM,
+        reversible=False,
+        allowed_agents={"D1", "executor"},
+        spec={
+            "expected_result": "process no longer running on host",
+            "verification_method": "verify_process_terminated",
+            "rollback": "restart process manually",
+            "failure_behavior": "REOPEN + escalate",
+        },
+        func=lambda host, pid, incident_id: executor.terminate_process(host, pid),
+    ))
+    reg.register(Tool(
+        name="block_indicator",
+        schema_in={"indicator": str, "incident_id": str},
+        risk_class=MEDIUM,
+        reversible=True,
+        allowed_agents={"D1", "executor"},
+        spec={
+            "expected_result": "indicator blocked at egress",
+            "verification_method": "verify_indicator_blocked",
+            "rollback": "unblock indicator",
+            "failure_behavior": "REOPEN + escalate",
+        },
+        func=lambda indicator, incident_id: executor.block_indicator(indicator),
+    ))
     return reg
 
 
-def build_read_tools(telemetry: TelemetrySource) -> ToolRegistry:
-    reg = ToolRegistry()
+def build_read_tools(telemetry: TelemetrySource, controls=None) -> ToolRegistry:
+    reg = ToolRegistry(controls)
     reg.register(Tool(
         name="search_events",
         schema_in={"host": str, "event_id": str, "process_name": str, "user": str, "limit": int},
@@ -174,6 +212,30 @@ def build_read_tools(telemetry: TelemetrySource) -> ToolRegistry:
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_CORRELATION},
         func=lambda **kw: [e for e in telemetry.get_network_connections(**kw)],
+    ))
+    reg.register(Tool(
+        name="get_file_activity",
+        schema_in={"host": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_INVESTIGATION, AGENT_CORRELATION},
+        func=lambda host, limit=100: [e for e in telemetry.get_file_activity(host, limit)],
+    ))
+    reg.register(Tool(
+        name="get_authentication_events",
+        schema_in={"host": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_INVESTIGATION, AGENT_THREAT},
+        func=lambda host, limit=100: [e for e in telemetry.get_authentication_events(host, limit)],
+    ))
+    reg.register(Tool(
+        name="get_host_details",
+        schema_in={"host": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents=_REASONING_AGENTS,
+        func=lambda host: telemetry.get_host_details(host),
     ))
     reg.register(Tool(
         name="lookup_ip",

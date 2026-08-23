@@ -34,9 +34,10 @@ class PipelineStep:
 
 class AgentPipeline:
     def __init__(self, llm: LLMClient, budgets: dict | None = None,
-                 registry=None) -> None:
+                 registry=None, controls=None) -> None:
         self._llm = llm
         self._registry = registry
+        self._controls = controls  # ControlState (§17); None = unrestricted
         self._budgets = {**DEFAULT_BUDGETS, **(budgets or {})}
         self._agents = {
             a: ReasoningAgent(a, llm) for a in AGENTS
@@ -46,6 +47,15 @@ class AgentPipeline:
         """Run all agents. Returns (steps, results_by_agent)."""
         steps: list[PipelineStep] = []
         results: dict = {}
+
+        # §17 emergency controls: operator pause/safe-mode halts autonomy
+        # entirely; disabled agents fail-safe-stop the run at their stage.
+        if self._controls is not None and self._controls.autonomy_blocked():
+            steps.append(PipelineStep("A1", ok=False, degraded=True,
+                                      elapsed_ms=0,
+                                      error="autonomy paused by operator"))
+            return steps, results
+
         tool_budget = self._budgets["tool_calls_per_incident"]
         consumed = 0
 
@@ -55,6 +65,11 @@ class AgentPipeline:
             if consumed >= tool_budget:
                 steps.append(PipelineStep(agent_id, ok=False, degraded=True,
                                           elapsed_ms=0, error="tool budget exceeded"))
+                break
+            if self._controls is not None and agent_id in self._controls.disabled_agents:
+                steps.append(PipelineStep(agent_id, ok=False, degraded=True,
+                                          elapsed_ms=0,
+                                          error="agent disabled by operator"))
                 break
             tool_results = tool_calls.get(agent_id, "")
             start = time.monotonic()

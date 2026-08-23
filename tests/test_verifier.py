@@ -50,7 +50,7 @@ def test_verify_process_terminated():
     vf = SimulatedVerifier(ex)
     v = vf.verify_process_terminated("win-vm", "1000", "inc-1")
     assert v.passed is False
-    vf._terminate("win-vm", "1000")
+    ex.terminate_process("win-vm", "1000")
     v2 = vf.verify_process_terminated("win-vm", "1000", "inc-1")
     assert v2.passed is True
 
@@ -60,7 +60,7 @@ def test_verify_indicator_blocked():
     vf = SimulatedVerifier(ex)
     v = vf.verify_indicator_blocked("185.220.101.4", "inc-1")
     assert v.passed is False
-    vf._block("185.220.101.4")
+    ex.block_indicator("185.220.101.4")
     assert vf.verify_indicator_blocked("185.220.101.4", "inc-1").passed is True
 
 
@@ -69,7 +69,7 @@ def test_verify_persistence_removed():
     vf = SimulatedVerifier(ex)
     v = vf.verify_persistence_removed("win-vm", "inc-1")
     assert v.passed is False
-    vf._clean_host("win-vm")
+    ex.remove_persistence("win-vm")
     assert vf.verify_persistence_removed("win-vm", "inc-1").passed is True
 
 

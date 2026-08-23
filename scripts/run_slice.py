@@ -21,6 +21,10 @@ if __name__ == "__main__":
                     evidence_count=args.evidence_count,
                     telemetry_mode=args.telemetry)
 
+    if res.get("incident") is None:
+        for err in res.get("errors", []):
+            print(f"blocked: {err}")
+        sys.exit(1)
     for err in res.get("errors", []):
         print(f"degraded: {err}")
     print(f"final state: {res['incident'].state.value}")

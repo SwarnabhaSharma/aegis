@@ -26,12 +26,25 @@ class ResponseAction:
 
 
 class SimulatedExecutor:
-    """In-memory host isolation. Idempotent via idempotency_key."""
+    """In-memory response actions. Idempotent via idempotency_key.
+
+    State written here is what D2 verifies against — single source of truth
+    (fixes unreachable verifier seams, debt #11).
+    """
 
     def __init__(self) -> None:
         self._hosts: dict[str, bool] = {}  # host -> isolated
         self._by_key: dict[str, ResponseResult] = {}
         self._actions: list[ResponseAction] = []
+        self._terminated: set[tuple[str, str]] = set()   # (host, pid)
+        self._blocked: set[str] = set()                   # indicators
+        self._clean: set[str] = set()                     # persistence-removed hosts
+
+    def _record(self, incident_id, action, target, key, result):
+        self._actions.append(ResponseAction(
+            incident_id=incident_id, action=action, target=target,
+            status=result.status, result=result, idempotency_key=key,
+        ))
 
     def isolate_host(
         self,
@@ -53,11 +66,48 @@ class SimulatedExecutor:
                                     status="isolated", message="host isolated (simulated)")
 
         self._by_key[key] = result
-        self._actions.append(ResponseAction(
-            incident_id=incident_id, action="isolate_host", target=host,
-            status=result.status, result=result, idempotency_key=key,
-        ))
+        self._record(incident_id, "isolate_host", host, key, result)
         return result
+
+    def terminate_process(self, host: str, pid: str) -> ResponseResult:
+        """Idempotent: terminating an already-dead pid reports success."""
+        self._terminated.add((host, pid))
+        result = ResponseResult(host=host, isolated=False,
+                                status="terminated",
+                                message=f"process {pid} terminated (simulated)")
+        self._record("", "terminate_process", f"{host}:{pid}",
+                     f"terminate_process:{host}:{pid}", result)
+        return result
+
+    def block_indicator(self, indicator: str) -> ResponseResult:
+        """Reversible via unblock_indicator rollback."""
+        self._blocked.add(indicator)
+        result = ResponseResult(host=indicator, isolated=False,
+                                status="blocked",
+                                message=f"{indicator} blocked (simulated)")
+        self._record("", "block_indicator", indicator,
+                     f"block_indicator:{indicator}", result)
+        return result
+
+    def remove_persistence(self, host: str) -> ResponseResult:
+        self._clean.add(host)
+        result = ResponseResult(host=host, isolated=False,
+                                status="persistence_removed",
+                                message=f"persistence removed on {host} (simulated)")
+        self._record("", "remove_persistence", host,
+                     f"remove_persistence:{host}", result)
+        return result
+
+    # -- state readers (D2 verifies against these) --
+
+    def process_terminated(self, host: str, pid: str) -> bool:
+        return (host, pid) in self._terminated
+
+    def indicator_blocked(self, indicator: str) -> bool:
+        return indicator in self._blocked
+
+    def persistence_removed(self, host: str) -> bool:
+        return host in self._clean
 
     def is_isolated(self, host: str) -> bool:
         return self._hosts.get(host, False)

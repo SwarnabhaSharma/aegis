@@ -81,3 +81,48 @@ class ElasticsearchTelemetry(TelemetrySource):
             ]}},
             limit,
         )
+
+    def get_file_activity(self, host: str, limit: int = 100) -> list[TelemetryEvent]:
+        return self._search(
+            {"bool": {"must": [
+                {"match": {"host.name": host.lower()}},
+                {"term": {"winlog.event_id": "11"}},
+            ]}},
+            limit,
+        )
+
+    def get_authentication_events(self, host: str, limit: int = 100) -> list[TelemetryEvent]:
+        return self._search(
+            {"bool": {"filter": [
+                {"match": {"host.name": host.lower()}},
+                {"match": {"winlog.channel": "Security"}},
+                {"terms": {"winlog.event_id": ["4624", "4625", "4634", "4647", "4672"]}},
+            ]}},
+            limit,
+        )
+
+    def get_host_details(self, host: str) -> dict:
+        resp = self._es.search(index=self._index, body={
+            "size": 0,
+            "query": {"match": {"host.name": host.lower()}},
+            "aggs": {
+                "first_seen": {"min": {"field": "@timestamp"}},
+                "last_seen": {"max": {"field": "@timestamp"}},
+                "channels": {"terms": {"field": "winlog.channel", "size": 20}},
+                "users": {"terms": {"field": "user.name", "size": 50}},
+            },
+        })
+        aggs = resp.get("aggregations", {})
+        total = resp.get("hits", {}).get("total", {})
+        count = total.get("value", 0) if isinstance(total, dict) else int(total)
+        if not count:
+            return {"host": host, "seen": False}
+        return {
+            "host": host,
+            "seen": True,
+            "event_count": count,
+            "first_seen": aggs.get("first_seen", {}).get("value_as_string", ""),
+            "last_seen": aggs.get("last_seen", {}).get("value_as_string", ""),
+            "channels": sorted(b["key"] for b in aggs.get("channels", {}).get("buckets", [])),
+            "users": sorted(b["key"] for b in aggs.get("users", {}).get("buckets", [])),
+        }

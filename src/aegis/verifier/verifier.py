@@ -21,28 +21,17 @@ class Verification:
 
 
 class SimulatedVerifier:
-    """D2 verifier. Checks simulated backend state; generic retry -> REOPEN/ESCALATED."""
+    """D2 verifier. Reads post-action state the executor wrote; generic
+    retry -> REOPEN/ESCALATED."""
 
     def __init__(self, executor: SimulatedExecutor, max_retries: int = 2) -> None:
         self._executor = executor
         self._max_retries = max_retries
         self._retries: dict[str, int] = {}
-        self._blocked: set[str] = set()
-        self._terminated: set[tuple[str, str]] = set()
-        self._clean: set[str] = set()
         self._log: list[Verification] = []
 
-    # -- simulated backend mutators (Phase 5 actions would call these) --
-    def _block(self, indicator: str) -> None:
-        self._blocked.add(indicator)
+    # -- verify methods (full set, H.2); state produced by D1 actions --
 
-    def _terminate(self, host: str, pid: str) -> None:
-        self._terminated.add((host, pid))
-
-    def _clean_host(self, host: str) -> None:
-        self._clean.add(host)
-
-    # -- verify methods (full set, H.2) --
     def verify_host_isolated(self, host: str, incident_id: str) -> Verification:
         actual = "isolated:true" if self._executor.is_isolated(host) else "isolated:false"
         v = Verification(
@@ -53,27 +42,30 @@ class SimulatedVerifier:
         return v
 
     def verify_process_terminated(self, host: str, pid: str, incident_id: str) -> Verification:
-        actual = "terminated:true" if (host, pid) in self._terminated else "terminated:false"
+        actual = ("terminated:true"
+                  if self._executor.process_terminated(host, pid) else "terminated:false")
         v = Verification(
-            incident_id=incident_id, action="verify_process_terminated", target=f"{host}:{pid}",
+            incident_id=incident_id, action="verify_process_terminated",
+            target=f"{host}:{pid}",
             expected="terminated:true", actual=actual, passed=actual == "terminated:true",
         )
         self._log.append(v)
         return v
 
     def verify_indicator_blocked(self, indicator: str, incident_id: str) -> Verification:
-        actual = "blocked:true" if indicator in self._blocked else "blocked:false"
+        actual = ("blocked:true" if self._executor.indicator_blocked(indicator)
+                  else "blocked:false")
         v = Verification(
-            incident_id=indicator, action="verify_indicator_blocked", target=indicator,
+            incident_id=incident_id, action="verify_indicator_blocked",
+            target=indicator,
             expected="blocked:true", actual=actual, passed=actual == "blocked:true",
         )
-        # note: incident_id overloaded above for brevity; fix:
-        v.incident_id = incident_id
         self._log.append(v)
         return v
 
     def verify_persistence_removed(self, host: str, incident_id: str) -> Verification:
-        actual = "clean:true" if host in self._clean else "clean:false"
+        actual = ("clean:true" if self._executor.persistence_removed(host)
+                  else "clean:false")
         v = Verification(
             incident_id=incident_id, action="verify_persistence_removed", target=host,
             expected="clean:true", actual=actual, passed=actual == "clean:true",
