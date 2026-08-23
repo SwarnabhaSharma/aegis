@@ -8,7 +8,6 @@ from aegis.incidents.evidence import evidence_from_tool_result
 from aegis.privacy import ai_visible, classification_level, detect, redact, withheld_keys
 from aegis.tools.telemetry import TelemetryEvent
 
-
 # -- detection --
 
 def test_detect_email():
@@ -16,7 +15,9 @@ def test_detect_email():
 
 
 def test_detect_credential_kv():
-    kinds = detect("powershell -c $p='password=Hunter2Secret!' ; curl -H 'Authorization: Bearer xyz'")
+    kinds = detect(
+        "powershell -c $p='password=Hunter2Secret!' ; "
+        "curl -H 'Authorization: Bearer xyz'")
     assert "credential" in kinds
 
 

@@ -125,11 +125,14 @@ def _fmt_events(events, n=8) -> str:
 
 def investigate(store, inc_id: str, llm, registry=None, seed=None,
                 confidence_floor: float = 0.95,
-                audit=None, controls=None) -> dict:
+                audit=None, controls=None,
+                events=None) -> dict:
     """Drive TRIAGING -> RESPONSE_PLANNED -> policy decision. Shared core.
 
     audit: AuditRecorder or None (memory-only capture when None).
     controls: ControlState (§17) or None (unrestricted).
+    events: explicit TelemetryEvent list (eval corpus); overrides
+            registry-prefetch / synthetic fallback.
     """
     from aegis.agents.reasoning import PROMPT_VERSION, detect_injection, untrusted
     from aegis.agents.validation import validate_evidence
@@ -166,8 +169,10 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         )
 
     # evidence: prefetch through the registry (agentic mode agents also fetch
-    # their own); synthetic mode falls back to the canned story.
-    if registry is not None:
+    # their own); explicit events override (eval corpus); else canned story.
+    if events is not None:
+        evidence_events = list(events)
+    elif registry is not None:
         proc_tree = registry.call("get_process_tree", "A2", host=host)
         net = registry.call("get_network_connections", "A2", host=host)
         evidence_events = list(proc_tree) + list(net)
@@ -177,8 +182,11 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     for ev in evidence_from_tool_result(inc_id, "read_tools", evidence_events):
         store.add_evidence(ev)
 
-    # §15: flag suspicious instruction patterns found in untrusted inputs
-    injection_flags = list(detect_injection(summary_text))
+    # §15: flag suspicious instruction patterns found in untrusted inputs.
+    # Scan RAW content only — summary_text embeds our own untrusted markers,
+    # which the detector must not self-flag.
+    injection_flags = list(detect_injection(
+        inc.fields.get("command_line", "") or ""))
     for e in evidence_events:
         for field_val in (e.command_line, e.file_path):
             if field_val:
