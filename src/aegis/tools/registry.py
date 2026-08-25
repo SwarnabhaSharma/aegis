@@ -209,7 +209,21 @@ def build_response_tools(executor, controls=None) -> ToolRegistry:
     return reg
 
 
-def build_read_tools(telemetry: TelemetrySource, controls=None) -> ToolRegistry:
+def build_read_tools(telemetry: TelemetrySource, controls=None,
+                     ti_chain=None, nvd_api_key: str = "") -> ToolRegistry:
+    """ti_chain: optional TIChain (live providers); None -> local store only."""
+
+    def _lookup_cve(cve_id: str) -> dict:
+        from aegis.config import get_settings
+        from aegis.intel.ti_chain import nvd_lookup_cve
+
+        key = nvd_api_key or get_settings().nvd_api_key
+        try:
+            return nvd_lookup_cve(cve_id, key)
+        except Exception as e:
+            return {"cve": cve_id.upper(), "found": False,
+                    "error": f"nvd unavailable: {type(e).__name__}"}
+
     reg = ToolRegistry(controls)
     reg.register(Tool(
         name="search_events",
@@ -265,7 +279,7 @@ def build_read_tools(telemetry: TelemetrySource, controls=None) -> ToolRegistry:
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT, AGENT_INVESTIGATION},
-        func=lambda ip: ti.lookup(ip),
+        func=lambda ip: ti_chain.lookup(ip) if ti_chain else ti.lookup(ip),
     ))
     reg.register(Tool(
         name="lookup_hash",
@@ -273,7 +287,7 @@ def build_read_tools(telemetry: TelemetrySource, controls=None) -> ToolRegistry:
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT},
-        func=lambda value: ti.lookup(value),
+        func=lambda value: ti_chain.lookup(value) if ti_chain else ti.lookup(value),
     ))
     reg.register(Tool(
         name="lookup_domain",
@@ -281,7 +295,21 @@ def build_read_tools(telemetry: TelemetrySource, controls=None) -> ToolRegistry:
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT},
-        func=lambda value: ti.lookup(value),
+        func=lambda value: ti_chain.lookup(value) if ti_chain else ti.lookup(value),
+    ))
+    reg.register(Tool(
+        name="lookup_cve",
+        schema_in={"cve_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_THREAT},
+        spec={
+            "expected_result": "CVE metadata (CVSS/severity/description)",
+            "verification_method": "n/a (read-only)",
+            "rollback": "n/a",
+            "failure_behavior": "error observation, non-fatal",
+        },
+        func=_lookup_cve,
     ))
     reg.register(Tool(
         name="get_policy",
