@@ -16,7 +16,7 @@ from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
 from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
-from aegis.policies.engine import Decision, evaluate
+from aegis.policies.engine import ASSET_CRITICALITY, Decision, evaluate
 from aegis.verifier.verifier import SimulatedVerifier
 
 
@@ -231,6 +231,16 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         "A4": f"ATT&CK keyword candidates: {atk_text}",
         "A5": "",
     }
+
+    # §11 conditional permissions: context reflects each agent's stage
+    if registry is not None:
+        from aegis.policies.permissions import AGENT_STAGE_STATE, PermissionContext
+
+        registry.set_permission_provider(lambda aid: PermissionContext(
+            incident_state=AGENT_STAGE_STATE.get(aid, ""),
+            confidence=confidence_floor,
+            asset_criticality=ASSET_CRITICALITY.get(host, "unknown"),
+        ))
 
     pipe = AgentPipeline(llm, registry=registry, controls=controls)
     steps, results = pipe.run(

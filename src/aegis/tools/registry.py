@@ -45,16 +45,21 @@ class Tool:
     audit: bool = True
     func: object = None
     spec: dict | None = None  # §16 ActionSpec: expected/verify/rollback/failure
+    requires: dict | None = None  # §11 conditional permission predicate
 
     def authorized(self, agent: str) -> bool:
         return agent in self.allowed_agents
 
 
 class ToolRegistry:
-    def __init__(self, controls=None) -> None:
+    def __init__(self, controls=None, permission_provider=None) -> None:
         self._tools: dict[str, Tool] = {}
         self.controls = controls  # ControlState; None = no runtime revocation
+        self._permission_provider = permission_provider  # fn(agent)->PermissionContext
         self.calls: list[dict] = []  # every call attempt, ok or not (audit #4)
+
+    def set_permission_provider(self, provider_fn) -> None:
+        self._permission_provider = provider_fn
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -74,6 +79,12 @@ class ToolRegistry:
                 raise PermissionError(f"{name} revoked by operator")
             if not tool.authorized(agent):
                 raise PermissionError(f"{agent} not authorized for {name}")
+            if tool.requires is not None and self._permission_provider is not None:
+                ctx = self._permission_provider(agent)
+                ok, why = ctx.satisfies(tool.requires)
+                if not ok:
+                    raise PermissionError(
+                        f"conditional permission denied for {name}: {why}")
             if tool.func is None:
                 raise RuntimeError(f"{name} has no backend")
             result = tool.func(**kwargs)
@@ -263,6 +274,7 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_THREAT},
+        requires={"min_state": "CORRELATING"},  # §11: deep-dive after correlation
         func=lambda host, limit=100: [e for e in telemetry.get_authentication_events(host, limit)],
     ))
     reg.register(Tool(
@@ -303,6 +315,7 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT},
+        requires={"min_state": "ASSESSING"},  # §11: CVE context in threat phase
         spec={
             "expected_result": "CVE metadata (CVSS/severity/description)",
             "verification_method": "n/a (read-only)",

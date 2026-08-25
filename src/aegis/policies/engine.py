@@ -42,6 +42,13 @@ class PolicyDecision:
     overridden: bool = False
 
 
+def _version_key(version: str):
+    try:
+        return tuple(int(x) for x in version.split("."))
+    except ValueError:
+        return (0,)
+
+
 def evaluate(
     action: str,
     facts: dict[str, Any],
@@ -54,7 +61,9 @@ def evaluate(
 ) -> PolicyDecision:
     """Evaluate an action against matching policies. Pure; never executes.
 
-    store/incident_id optional: enable Asset-record criticality resolution.
+    Precedence (§13 J.2): most-specific policy wins — specificity = number of
+    conditions, tie broken by higher version. Equal-specificity policies that
+    both pass but disagree -> fail-safe DENY.
     """
     if override is not None:
         if override not in (Decision.ALLOW, Decision.DENY):
@@ -67,17 +76,38 @@ def evaluate(
         return PolicyDecision(action, Decision.DENY, "-", "no policy for action",
                               facts, dry_run=dry_run)
 
+    # most-specific first: more conditions bind tighter; version breaks ties
+    matches.sort(key=lambda p: (-len(p.conditions),
+                                tuple(-x for x in _version_key(p.version))))
+
     results = [_eval_one(p, facts, store=store, incident_id=incident_id)
                for p in matches]
-    decisions = {r.decision for r in results}
+
+    # highest-specificity tier decides; identical-version disagreement -> DENY
+    top_spec = len(matches[0].conditions)
+    tier_pairs = [(r, p) for r, p in zip(results, matches, strict=True)
+                  if len(p.conditions) == top_spec]
+    top_version = max(_version_key(p.version) for _, p in tier_pairs)
+    latest = [r for r, p in tier_pairs
+              if _version_key(p.version) == top_version]
+    decisions = {r.decision for r in latest}
     if len(decisions) > 1:
-        versions = ";".join(p.version for p in matches)
+        versions = ";".join(sorted({p.version for _, p in tier_pairs}))
         return PolicyDecision(action, Decision.DENY, versions,
-                              "conflicting policies -> fail-safe DENY", facts,
-                              dry_run=dry_run)
-    r = results[0]
-    return PolicyDecision(action, r.decision, r.policy_version, r.reason,
-                          r.facts, dry_run=dry_run)
+                              "conflicting policies at top specificity -> fail-safe DENY",
+                              facts, dry_run=dry_run)
+    winner = latest[0]
+    if winner.decision is Decision.DENY:
+        # lower-specificity policies may still satisfy where the strictest failed
+        for r, _p in zip(results[1:], matches[1:], strict=True):
+            if r.decision is not Decision.DENY:
+                return PolicyDecision(action, r.decision, r.policy_version,
+                                      f"{r.reason} (generalized fallback)",
+                                      r.facts, dry_run=dry_run)
+        return PolicyDecision(action, Decision.DENY, winner.policy_version,
+                              winner.reason, facts, dry_run=dry_run)
+    return PolicyDecision(action, winner.decision, winner.policy_version,
+                          winner.reason, winner.facts, dry_run=dry_run)
 
 
 def _eval_one(policy: Policy, facts: dict[str, Any],

@@ -50,13 +50,25 @@ def test_override_recorded():
 
 
 def test_conflict_denies_failsafe():
-    allow = Policy(action="isolate_host", conditions={"confidence": ">= 0.90"},
-                   approval_required=False, risk_class="HIGH", version="2.0")
-    deny = Policy(action="isolate_host", conditions={"confidence": ">= 0.90"},
-                  approval_required=True, risk_class="HIGH", version="1.0")
-    r = evaluate("isolate_host", {"confidence": 0.95}, policies=[allow, deny])
+    # identical versions that disagree -> fail-safe DENY
+    allow = _pol({"confidence": ">= 0.90"}, approval=False, version="2.0")
+    approve = _pol({"confidence": ">= 0.90"}, approval=True, version="2.0")
+    r = evaluate("isolate_host", {"confidence": 0.95}, policies=[allow, approve])
     assert r.decision is Decision.DENY
-    assert "conflicting" in r.reason
+    assert "top specificity" in r.reason
+
+
+def test_newer_version_wins_same_specificity():
+    old = _pol({"confidence": ">= 0.90"}, approval=True, version="1.0")
+    new = _pol({"confidence": ">= 0.90"}, approval=False, version="2.0")
+    r = evaluate("isolate_host", {"confidence": 0.95}, policies=[old, new])
+    assert r.decision is Decision.ALLOW
+    assert r.policy_version == "2.0"
+
+
+def _pol(conditions, approval=False, version="1.0"):
+    return Policy(action="isolate_host", conditions=conditions,
+                  approval_required=approval, risk_class="HIGH", version=version)
 
 
 def test_approval_required_yields_approve():
