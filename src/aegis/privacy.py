@@ -77,3 +77,95 @@ def withheld_keys(tool: str, obs) -> list[str]:
     if allowed is None or not isinstance(obs, dict):
         return []
     return sorted(k for k in obs if k not in allowed)
+
+
+# -- §10 task-based minimization + RoleViews (WP-F) --
+
+# per-agent task profiles: which telemetry event_ids each agent needs.
+# Everything else is withheld from that agent's view (minimization).
+TASK_PROFILES: dict[str, set[str] | None] = {
+    "A1": set(),            # alert metadata only; no raw telemetry
+    "A2": None,             # investigation: full telemetry
+    "A3": None,             # correlation: full telemetry
+    "A4": {"3", "11", "4624", "4625"},  # threat: IOC-bearing events
+    "A5": set(),            # planner: policy/evidence summaries only
+}
+
+
+def task_view(agent_id: str, events: list) -> list:
+    """Withhold events outside the agent's task profile."""
+    profile = TASK_PROFILES.get(agent_id)
+    if profile is None:
+        return list(events)
+    return [e for e in events if getattr(e, "event_id", "") in profile]
+
+
+class RoleView:
+    """§10 role-scoped views over an observation. AI view = allowlist +
+    redaction; analyst view = full fidelity."""
+
+    def __init__(self, tool: str, obs):
+        self.tool = tool
+        self.raw = obs
+
+    def ai(self) -> str:
+        from aegis.agents.reasoning import _fmt_observation
+
+        return _fmt_observation(self.ai_visible(), tool=self.tool)
+
+    def ai_visible(self):
+        return ai_visible(self.tool, self.raw)
+
+    def withheld(self) -> list[str]:
+        return withheld_keys(self.tool, self.raw)
+
+    def analyst(self):
+        return self.raw
+
+
+# -- reversible tokenization vault (WP-F, §10) --
+
+import secrets as _secrets  # noqa: E402
+
+
+class TokenVault:
+    """Per-incident reversible tokenization.
+
+    tokenize(): replaces each detected sensitive span with a unique
+    [TOK:<n>:<rand>] token and stores the ORIGINAL span. reveal(): analyst-only
+    restoration. Vault stays local to the incident — never serialized into
+    prompts, never persisted to ES.
+    """
+
+    def __init__(self) -> None:
+        self._map: dict[str, str] = {}   # token -> original span
+        self._counter = 0
+
+    def _next_token(self) -> str:
+        self._counter += 1
+        return f"[TOK:{self._counter}:{_secrets.token_hex(2)}]"
+
+    def tokenize(self, text: str) -> tuple[str, list[str]]:
+        if not text:
+            return text, []
+        kinds: list[str] = []
+        issued: list[str] = []
+        out = str(text)
+        for kind, rx in _COMPILED.items():
+            def _sub(m, kind=kind):
+                token = self._next_token()
+                self._map[token] = m.group(0)
+                kinds.append(kind)
+                issued.append(token)
+                return token
+            out = rx.sub(_sub, out)
+        return out, issued
+
+    def reveal(self, text: str) -> str:
+        out = str(text)
+        for token, original in self._map.items():
+            out = out.replace(token, original)
+        return out
+
+    def tokens(self) -> list[str]:
+        return list(self._map.keys())
