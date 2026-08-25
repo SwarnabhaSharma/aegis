@@ -49,8 +49,13 @@ def evaluate(
     dry_run: bool = False,
     override: Decision | None = None,
     policies: list[Policy] | None = None,
+    store=None,
+    incident_id: str = "",
 ) -> PolicyDecision:
-    """Evaluate an action against matching policies. Pure; never executes."""
+    """Evaluate an action against matching policies. Pure; never executes.
+
+    store/incident_id optional: enable Asset-record criticality resolution.
+    """
     if override is not None:
         if override not in (Decision.ALLOW, Decision.DENY):
             raise ValueError("override must be Decision.ALLOW or Decision.DENY")
@@ -62,7 +67,8 @@ def evaluate(
         return PolicyDecision(action, Decision.DENY, "-", "no policy for action",
                               facts, dry_run=dry_run)
 
-    results = [_eval_one(p, facts) for p in matches]
+    results = [_eval_one(p, facts, store=store, incident_id=incident_id)
+               for p in matches]
     decisions = {r.decision for r in results}
     if len(decisions) > 1:
         versions = ";".join(p.version for p in matches)
@@ -74,11 +80,20 @@ def evaluate(
                           r.facts, dry_run=dry_run)
 
 
-def _eval_one(policy: Policy, facts: dict[str, Any]) -> PolicyDecision:
+def _eval_one(policy: Policy, facts: dict[str, Any],
+              store=None, incident_id: str = "") -> PolicyDecision:
     resolved = dict(facts)
     host = facts.get("host")
     if host:
-        resolved["asset_criticality"] = ASSET_CRITICALITY.get(host, "unknown")
+        # criticality: Asset records first (#9), hardcoded map as fallback
+        criticality = None
+        if store is not None and incident_id:
+            from aegis.incidents.entities import get_asset_criticality
+
+            criticality = get_asset_criticality(store, incident_id, host)
+        if criticality is None:
+            criticality = ASSET_CRITICALITY.get(host, "unknown")
+        resolved["asset_criticality"] = criticality
 
     failures: list[str] = []
     for key, cond in policy.conditions.items():

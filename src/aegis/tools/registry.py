@@ -130,6 +130,14 @@ def build_verify_tools(verifier, controls=None) -> ToolRegistry:
         allowed_agents={"D2", "verifier"},
         func=lambda host, incident_id: verifier.verify_persistence_removed(host, incident_id),
     ))
+    reg.register(Tool(
+        name="verify_account_disabled",
+        schema_in={"username": str, "incident_id": str},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={"D2", "verifier"},
+        func=lambda username, incident_id: verifier.verify_account_disabled(username, incident_id),
+    ))
     return reg
 
 
@@ -183,6 +191,20 @@ def build_response_tools(executor, controls=None) -> ToolRegistry:
             "failure_behavior": "REOPEN + escalate",
         },
         func=lambda indicator, incident_id: executor.block_indicator(indicator),
+    ))
+    reg.register(Tool(
+        name="disable_account",
+        schema_in={"username": str, "incident_id": str},
+        risk_class=HIGH,
+        reversible=True,
+        allowed_agents={"D1", "executor"},
+        spec={
+            "expected_result": "account cannot authenticate",
+            "verification_method": "verify_account_disabled",
+            "rollback": "re-enable account",
+            "failure_behavior": "REOPEN + escalate",
+        },
+        func=lambda username, incident_id: executor.disable_account(username),
     ))
     return reg
 

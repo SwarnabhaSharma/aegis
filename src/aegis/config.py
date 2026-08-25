@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     aegis_log_level: str = "INFO"
     aegis_env: str = "dev"
 
+    # Threat intelligence (§15: local store default; live providers opt-in)
+    ti_providers: str = "local"  # comma list, e.g. "local,abuseipdb,virustotal,otx"
+    vt_api_key: str = ""
+    abuseipdb_api_key: str = ""
+    otx_api_key: str = ""
+    nvd_api_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

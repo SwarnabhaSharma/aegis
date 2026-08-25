@@ -39,6 +39,7 @@ class SimulatedExecutor:
         self._terminated: set[tuple[str, str]] = set()   # (host, pid)
         self._blocked: set[str] = set()                   # indicators
         self._clean: set[str] = set()                     # persistence-removed hosts
+        self._disabled_accounts: set[str] = set()
 
     def _record(self, incident_id, action, target, key, result):
         self._actions.append(ResponseAction(
@@ -98,6 +99,16 @@ class SimulatedExecutor:
                      f"remove_persistence:{host}", result)
         return result
 
+    def disable_account(self, username: str) -> ResponseResult:
+        """Idempotent. State read by verify_account_disabled (D2)."""
+        self._disabled_accounts.add(username.lower())
+        result = ResponseResult(host=username.lower(), isolated=False,
+                                status="account_disabled",
+                                message=f"account {username} disabled (simulated)")
+        self._record("", "disable_account", username,
+                     f"disable_account:{username.lower()}", result)
+        return result
+
     # -- state readers (D2 verifies against these) --
 
     def process_terminated(self, host: str, pid: str) -> bool:
@@ -108,6 +119,9 @@ class SimulatedExecutor:
 
     def persistence_removed(self, host: str) -> bool:
         return host in self._clean
+
+    def account_disabled(self, username: str) -> bool:
+        return username.lower() in self._disabled_accounts
 
     def is_isolated(self, host: str) -> bool:
         return self._hosts.get(host, False)

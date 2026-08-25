@@ -73,6 +73,17 @@ class SimulatedVerifier:
         self._log.append(v)
         return v
 
+    def verify_account_disabled(self, username: str, incident_id: str) -> Verification:
+        actual = ("disabled:true" if self._executor.account_disabled(username)
+                  else "disabled:false")
+        v = Verification(
+            incident_id=incident_id, action="verify_account_disabled",
+            target=username,
+            expected="disabled:true", actual=actual, passed=actual == "disabled:true",
+        )
+        self._log.append(v)
+        return v
+
     # -- retry policy: fail -> REOPEN until max_retries then ESCALATED --
     def next_state(self, verification: Verification) -> IncidentState:
         if verification.passed:

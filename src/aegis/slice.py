@@ -264,7 +264,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
 
     facts = {"host": host, "confidence": confidence,
              "evidence_count": len(evidence_events)}
-    decision = evaluate("isolate_host", facts)
+    decision = evaluate("isolate_host", facts, store=store, incident_id=inc_id)
 
     # §17 require-approval-for-all: even policy-ALLOW goes to the human gate
     if (controls is not None and controls.require_approval_all
