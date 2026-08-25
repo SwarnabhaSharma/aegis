@@ -252,30 +252,36 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     # §15 hallucinated-evidence defense: strip fabricated evidence_ids
     validation_report = validate_evidence(store, inc_id, results)
 
-    # audit + step-record persistence (#4/#5)
-    if audit is not None:
-        for s in steps:
+    # §18 audit + step-record persistence (#4/#5)
+    evidence_ids_released = [ev.id for ev in
+                             store.evidence(inc_id)]
+    for s in steps:
+        llm_attempts = getattr(results.get(s.agent), "attempts", 1) \
+            if s.agent in results else 1
+        audit_fields = {"ok": s.ok, "degraded": s.degraded,
+                        "elapsed_ms": s.elapsed_ms, "error": s.error,
+                        "llm_attempts": llm_attempts}
+        if audit is not None:
             audit.record("pipeline_stage", inc_id, actor=s.agent,
-                         ok=s.ok, degraded=s.degraded, elapsed_ms=s.elapsed_ms,
-                         error=s.error)
-        for c in getattr(registry, "calls", []) or []:
+                         data_requested="incident context + observations",
+                         data_released=evidence_ids_released,
+                         data_withheld=["privacy-redacted fields (see "
+                                        "privacy_redaction events)"],
+                         **audit_fields)
+        store.add_record("agentrun", inc_id, {"agent": s.agent, **audit_fields})
+    for c in getattr(registry, "calls", []) or []:
+        if audit is not None:
             audit.record("tool_call", inc_id, actor=c["agent"],
                          tool=c["tool"], ok=c["ok"], error=c["error"])
-        if injection_flags:
-            audit.record("injection_flag", inc_id, actor="telemetry",
-                         patterns=sorted(set(injection_flags)))
-        if validation_report:
-            audit.record("evidence_validation", inc_id, actor="validator",
-                         report=validation_report)
-    for s in steps:
-        store.add_record("agentrun", inc_id, vars(s))
-    for c in getattr(registry, "calls", []) or []:
         store.add_record("toolcall", inc_id, c)
 
     if any(not s.ok for s in steps):
         orch.transition(inc_id, IncidentState.ESCALATED,
                         "orchestrator", "pipeline degraded")
         errors = [f"{s.agent}: {s.error}" for s in steps if not s.ok]
+        if audit is not None:
+            audit.record("escalation", inc_id, actor="orchestrator",
+                         reason="pipeline degraded")
         return {"ok": False, "errors": errors, "related": related,
                 "evidence_count": len(evidence_events), "steps": steps}
 

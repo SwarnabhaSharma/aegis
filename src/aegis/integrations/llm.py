@@ -23,6 +23,7 @@ class LLMResult:
     raw: str
     degraded: bool = False
     error: str = ""
+    attempts: int = 1  # §18: corrective passes recorded for audit
 
 
 class LLMError(Exception):
@@ -62,11 +63,11 @@ class LLMClient:
                 data = json.loads(_extract_json(raw))
                 if not isinstance(data, dict):
                     raise ValueError("expected JSON object")
-                return LLMResult(ok=True, data=data, raw=raw)
+                return LLMResult(ok=True, data=data, raw=raw, attempts=attempt)
             except (LLMError, json.JSONDecodeError, ValueError) as e:
                 last_error = e
                 if attempt == 2:
-                    return self._degrade(system, user, last_raw)
+                    return self._degrade(system, user, last_raw, attempts=attempt)
         return self._degrade(system, user)  # unreachable, keeps linters calm
 
     def _call(self, system: str, user: str, temperature: float) -> str:
@@ -83,7 +84,8 @@ class LLMClient:
             raise LLMError(str(e)) from e
         return resp.choices[0].message.content or ""
 
-    def _degrade(self, system: str, user: str, raw: str = "") -> LLMResult:
+    def _degrade(self, system: str, user: str, raw: str = "",
+                 attempts: int = 2) -> LLMResult:
         # Deterministic fallback: never fabricate. Signal degrade; caller decides.
         detail = raw.strip().replace("\n", " ")[:200]
         return LLMResult(
@@ -91,6 +93,7 @@ class LLMClient:
             data={},
             raw=raw,
             degraded=True,
+            attempts=attempts,
             error=f"LLM unavailable or unparseable; deterministic degrade; last raw: {detail!r}",
         )
 
