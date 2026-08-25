@@ -138,7 +138,6 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     from aegis.agents.validation import validate_evidence
     from aegis.audit import version_manifest
     from aegis.intel import attack as attack_intel
-    from aegis.intel.correlation import find_related
     from aegis.privacy import redact as privacy_redact
     from aegis.tools.registry import TOOL_SCHEMA_VERSION
 
@@ -179,8 +178,19 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     else:
         evidence_events = _synthetic_events(host)
 
-    for ev in evidence_from_tool_result(inc_id, "read_tools", evidence_events):
+    evidence_records = evidence_from_tool_result(inc_id, "read_tools",
+                                                 evidence_events)
+    for ev in evidence_records:
         store.add_evidence(ev)
+
+    # §14 evidence graph: typed edges at collection time (WP-C)
+    from aegis.intel.graph import build_incident_edges, cross_incident_ioc_edges
+    from aegis.intel.graph import persist_edges as persist_graph_edges
+    from aegis.intel.graph import serialize_edges as graph_serialize
+
+    edges = build_incident_edges(evidence_records, inc_id)
+    shared_edges = cross_incident_ioc_edges(store, inc_id)
+    persist_graph_edges(store, inc_id, edges + shared_edges)
 
     # §15: flag suspicious instruction patterns found in untrusted inputs.
     # Scan RAW content only — summary_text embeds our own untrusted markers,
@@ -199,11 +209,16 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
             audit.record("privacy_redaction", inc_id, actor="privacy_gateway",
                          where="incident_summary", kinds=cmd_kinds,
                          reason="secrets/PII masked before AI-visible view")
+        if edges or shared_edges:
+            audit.record("graph_built", inc_id, actor="graph_builder",
+                         incident_edges=len(edges),
+                         cross_incident_edges=len(shared_edges))
 
-    related = find_related(store, inc_id)
+    related = cross_incident_ioc_edges(store, inc_id)
     corr_text = "\n".join(
-        f"{r['incident_id']} shares: {', '.join(r['shared'])}" for r in related
+        f"{e['dst_id']} shares indicator {e['src_id']}" for e in related
     ) or "(no related incidents)"
+    graph_text = graph_serialize(edges + shared_edges)
 
     cand = attack_intel.match_keywords(f"{summary_text}")
     atk_text = "; ".join(f"{c['id']} {c['name']} [{c['tactic']}]" for c in cand) or "(none)"
@@ -211,7 +226,8 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     tool_calls = {
         "A1": "",
         "A2": "",
-        "A3": f"correlation across incidents:\n{corr_text}",
+        "A3": (f"correlation across incidents:\n{corr_text}\n"
+               f"evidence graph:\n{graph_text}"),
         "A4": f"ATT&CK keyword candidates: {atk_text}",
         "A5": "",
     }

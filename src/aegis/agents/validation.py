@@ -5,17 +5,26 @@ incident store. Fabricated refs are stripped (never trusted), flagged in the
 result, and reported for audit.
 """
 
+from datetime import UTC, datetime
+
 from aegis.agents.reasoning import AGENTS
 
 
 def validate_evidence(store, incident_id: str,
                       results: dict) -> dict:
-    """Strip fabricated evidence_ids from each agent result.
+    """Strip fabricated/expired evidence_ids from each agent result.
 
     Returns report: {agent: {"fabricated": [...], "stripped": bool}}.
     Mutates results in place (AgentResult.data).
     """
-    known = {ev.id for ev in store.evidence(incident_id)}
+    now = None
+    known = {}
+    for ev in store.evidence(incident_id):
+        if ev.valid_until is not None:
+            now = now or datetime.now(UTC)
+            if ev.valid_until < now:
+                continue  # expired -> treated as absent (§14)
+        known[ev.id] = ev
     report: dict = {}
     for agent_id in AGENTS:
         r = results.get(agent_id)

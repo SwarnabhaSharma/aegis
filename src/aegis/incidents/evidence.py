@@ -19,6 +19,9 @@ class Evidence(BaseModel):
     observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw_ref: str = ""
     classification: str = "normal"
+    confidence: float = 0.5  # §14: per-evidence confidence (source-derived)
+    valid_until: datetime | None = None  # §14: expiration; None = indefinite
+    contradicts: list[str] = Field(default_factory=list)  # §14: ids this contradicts
     data: dict[str, Any] = Field(default_factory=dict)
 
 

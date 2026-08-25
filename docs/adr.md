@@ -185,3 +185,32 @@ Status: OPEN | APPROVED | REJECTED | SUPERSEDED
 - **Trade-offs**: Heaviest slice; best proof of architecture.
 - **Status**: APPROVED
 - **Downstream**: Phase 1-2 synthetic scenario, Phase 5-6 policy+exec+verify.
+
+---
+
+## ADR-021 — Full evidence graph model (WP-C)
+
+**Status:** Accepted (user decision, 2026-08-23)
+
+**Context:** Spec §14 requires evidence relationships and asks whether an
+explicit evidence graph should exist — and if proposed, why it beats simpler
+alternatives. Options were adjacency-list links vs a full typed graph.
+
+**Decision:** Full graph model. Nodes = evidence / asset-hosts / identities /
+indicators / incidents. Typed edges (`PROCESS_SPAWNED`, `CONNECTED_TO`,
+`WROTE_FILE`, `AUTHENTICATED_AS`, `BELONGS_TO_HOST`, `SHARED_INDICATOR`)
+persisted as `record:edge` docs inside `incident-steps-*`.
+
+**Why full graph over adjacency:** multi-hop traversal (process → network →
+IOC) and cross-incident indicator sharing are first-class queries the SOC
+narrative needs; per-record adjacency links would force app-side recursive
+scans that grow into an implicit, untested graph anyway.
+
+**Why ES docs over a graph store (Neo4j etc.):** keeps ADR-017 ES-only
+constraint; edge volume per incident is small (tens); in-memory BFS over
+loaded edges is trivially fast at this scale.
+
+**Consequences:** `intel/graph.py` owns build/persist/traverse/serialize;
+A3 consumes serialized subgraphs; validator treats expired evidence as absent.
+Upgrade trigger for a dedicated graph engine: sustained >1k edges/incident or
+cross-incident chains requiring server-side traversals.
