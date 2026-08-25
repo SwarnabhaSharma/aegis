@@ -106,7 +106,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", default="evals/corpus.json")
     ap.add_argument("--llm", choices=["real", "fake"], default="real")
+    ap.add_argument("--only", default="", help="comma-separated scenario ids")
     args = ap.parse_args()
+    only = {x.strip() for x in args.only.split(",") if x.strip()}
 
     corpus = _load_corpus(args.corpus)
     if args.llm == "fake":
@@ -119,12 +121,13 @@ def main() -> None:
         s = get_settings()
         llm = LLMClient(s.llm_base_url, s.llm_model)
 
-    # injection flags surface via audit recorder; capture per-scenario
     import aegis.slice as sl
     from aegis.audit import AuditRecorder
 
     rows = []
     for sc in corpus["scenarios"]:
+        if only and sc["id"] not in only:
+            continue
         rec = AuditRecorder()
         store = InMemoryStore()
         inc = ingest_alert(store, source="eval",
@@ -134,11 +137,27 @@ def main() -> None:
         res = sl.investigate(store, inc.id, llm, events=events,
                              audit=rec, confidence_floor=0.0)
         row = _row_from(sc, res, rec, store, inc.id)
+
+        # §20 deterministic baseline comparison (WP-H)
+        from aegis.intel.baseline import baseline_classify, baseline_injection_flag
+
+        base = baseline_classify(sc["alert_fields"], events)
+        row["baseline_investigate"] = base["investigate"]
+        row["baseline_classification"] = base["classification"]
+        row["baseline_injection_flag"] = baseline_injection_flag(events)
+
+        # §18/§26 audit assertion: non-degraded runs must emit pipeline_stage
+        row["audit_ok"] = any(e.category == "pipeline_stage"
+                              for e in rec.events)
         rows.append(row)
         print(f"{row['id']:<32} label={row['label']:<9} "
               f"investigate={row.get('investigate')} "
+              f"(base:{row['baseline_investigate']}) "
               f"malicious={row.get('judged_malicious')} "
-              f"inj_flag={row['injection_flagged']} degraded={row['degraded']}")
+              f"inj={row['injection_flagged']} deg={row['degraded']}")
+
+    assert all(r.get("audit_ok") or r["degraded"] for r in rows), \
+        "audit gap: non-degraded scenario without pipeline_stage event"
 
     metrics = _metrics(rows)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
