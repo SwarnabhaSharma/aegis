@@ -1,10 +1,9 @@
-"""Tool registry (Phase 2). Typed contracts, risk classes, allowed agents.
+"""Tool registry. Typed contracts, risk classes, allowed agents; single
+authorization gate (D-003/004). Contract mechanics enforced here: timeouts,
+rate limits, safe retries, output-shape checks (spec §16/§8)."""
 
-Registry is the single gate for which agent may call which tool (D-003/004).
-Read tools = risk READ, allowed to reasoning agents. Response/verify tools
-added in Phases 5-6, restricted to D1/D2.
-"""
-
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from aegis.intel import ti
@@ -44,19 +43,34 @@ class Tool:
     idempotent: bool = True
     audit: bool = True
     func: object = None
-    spec: dict | None = None  # §16 ActionSpec: expected/verify/rollback/failure
+    spec: dict | None = None  # §16 ActionSpec
     requires: dict | None = None  # §11 conditional permission predicate
+    schema_out: str | None = None  # §8 "list" | "dict" | None (unchecked)
+    rate_limit: int | None = None  # calls/minute; None = unlimited
 
     def authorized(self, agent: str) -> bool:
         return agent in self.allowed_agents
 
 
+class _Bucket:
+    def __init__(self, per_minute: int) -> None:
+        self.min_interval = 60.0 / max(per_minute, 1)
+        self.last = 0.0
+
+    def wait(self) -> None:
+        elapsed = time.monotonic() - self.last
+        if elapsed < self.min_interval:
+            time.sleep(self.min_interval - elapsed)
+        self.last = time.monotonic()
+
+
 class ToolRegistry:
     def __init__(self, controls=None, permission_provider=None) -> None:
         self._tools: dict[str, Tool] = {}
-        self.controls = controls  # ControlState; None = no runtime revocation
-        self._permission_provider = permission_provider  # fn(agent)->PermissionContext
-        self.calls: list[dict] = []  # every call attempt, ok or not (audit #4)
+        self.controls = controls
+        self._permission_provider = permission_provider
+        self.calls: list[dict] = []
+        self._buckets: dict[str, _Bucket] = {}
 
     def set_permission_provider(self, provider_fn) -> None:
         self._permission_provider = provider_fn
@@ -87,7 +101,34 @@ class ToolRegistry:
                         f"conditional permission denied for {name}: {why}")
             if tool.func is None:
                 raise RuntimeError(f"{name} has no backend")
-            result = tool.func(**kwargs)
+
+            bucket = self._buckets.setdefault(
+                tool.name, _Bucket(tool.rate_limit or 100000))
+            bucket.wait()
+
+            attempts = 2 if (tool.retry == "safe" and tool.idempotent) else 1
+            result = None
+            for attempt in range(attempts):
+                try:
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        # ponytail: hung worker leaks on timeout; subprocess
+                        # isolation only if a real backend ever hangs
+                        future = pool.submit(tool.func, **kwargs)
+                        result = future.result(timeout=tool.timeout_ms / 1000)
+                    break
+                except TimeoutError:
+                    raise RuntimeError(
+                        f"{name} timed out after {tool.timeout_ms}ms") from None
+                except Exception as e:
+                    if attempt + 1 >= attempts:
+                        raise
+                    entry["error"] = f"retrying after: {e}"
+
+            if tool.schema_out == "list" and not isinstance(result, list):
+                raise TypeError(f"{name}: expected list output")
+            if tool.schema_out == "dict" and not isinstance(result, dict):
+                raise TypeError(f"{name}: expected dict output")
+
             entry["ok"] = True
             return result
         except Exception as e:
@@ -242,6 +283,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents=_REASONING_AGENTS,
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda **kw: [e for e in telemetry.search_events(**kw)],
     ))
     reg.register(Tool(
@@ -250,6 +295,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_CORRELATION},
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda **kw: [e for e in telemetry.get_process_tree(**kw)],
     ))
     reg.register(Tool(
@@ -258,6 +307,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_CORRELATION},
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda **kw: [e for e in telemetry.get_network_connections(**kw)],
     ))
     reg.register(Tool(
@@ -266,6 +319,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_CORRELATION},
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda host, limit=100: [e for e in telemetry.get_file_activity(host, limit)],
     ))
     reg.register(Tool(
@@ -275,6 +332,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         reversible=True,
         allowed_agents={AGENT_INVESTIGATION, AGENT_THREAT},
         requires={"min_state": "CORRELATING"},  # §11: deep-dive after correlation
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda host, limit=100: [e for e in telemetry.get_authentication_events(host, limit)],
     ))
     reg.register(Tool(
@@ -283,6 +344,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents=_REASONING_AGENTS,
+        schema_out="dict",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda host: telemetry.get_host_details(host),
     ))
     reg.register(Tool(
@@ -330,6 +395,10 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_PLANNER, AGENT_INVESTIGATION},
+        schema_out="list",
+        spec={"expected_result": "read-only observation",
+              "verification_method": "n/a", "rollback": "n/a",
+              "failure_behavior": "error observation to agent"},
         func=lambda incident_type: [p for p in get_policy_for(incident_type)],
     ))
     return reg
