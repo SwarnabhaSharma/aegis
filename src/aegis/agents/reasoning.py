@@ -77,7 +77,8 @@ _OUTPUT_SCHEMA = {
     },
     "A4": {
         "summary": "str", "assessment": "str", "confidence": "float",
-        "attack_mapping": "str", "evidence_ids": "list",
+        "attack_techniques": "list of {id: str, confidence: float, evidence_ids: list}",
+        "evidence_ids": "list",
     },
     "A5": {
         "summary": "str", "recommended_actions": "list", "rationale": "str",

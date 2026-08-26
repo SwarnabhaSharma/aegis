@@ -5,9 +5,9 @@ investigate(): TRIAGING -> RESPONSE_PLANNED -> policy decision
               intel seeding always on).
 run_full_slice(): investigate + simulated execute/verify tail (CLI/tests).
 """
-
 import os
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from aegis.agents.pipeline import AgentPipeline
 from aegis.executor.executor import SimulatedExecutor
@@ -36,7 +36,8 @@ class FakeLLM(LLMClient):
             "hypotheses": [], "open_questions": [],
             "attack_chain": [], "affected_assets": ["win-vm"],
             "assessment": "malicious", "confidence": 0.95,
-            "attack_mapping": "T1059.001",
+            "attack_techniques": [{"id": "T1059.001", "confidence": 0.95,
+                                   "evidence_ids": ["ev-1"]}],
             "recommended_actions": ["isolate_host"],
             "rationale": "test", "risks": [],
         }
@@ -135,9 +136,10 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
             registry-prefetch / synthetic fallback.
     """
     from aegis.agents.reasoning import PROMPT_VERSION, detect_injection, untrusted
-    from aegis.agents.validation import validate_evidence
+    from aegis.agents.validation import validate_attack_mapping, validate_evidence
     from aegis.audit import version_manifest
     from aegis.intel import attack as attack_intel
+    from aegis.intel import attack as attack_store
     from aegis.privacy import redact as privacy_redact
     from aegis.tools.registry import TOOL_SCHEMA_VERSION
 
@@ -218,10 +220,13 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     corr_text = "\n".join(
         f"{e['dst_id']} shares indicator {e['src_id']}" for e in related
     ) or "(no related incidents)"
-    graph_text = graph_serialize(edges + shared_edges)
+    # ponytail: cap graph text; 200-event incidents serialize ~12KB
+    graph_text = graph_serialize((edges + shared_edges)[:40])
 
     cand = attack_intel.match_keywords(f"{summary_text}")
-    atk_text = "; ".join(f"{c['id']} {c['name']} [{c['tactic']}]" for c in cand) or "(none)"
+    atk_text = "; ".join(
+        f"{c['id']} {c['name']} [{'/'.join(c.get('tactics', []))}]"
+        for c in cand) or "(none)"
 
     tool_calls = {
         "A1": "",
@@ -249,8 +254,10 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         tool_calls,
     )
 
-    # §15 hallucinated-evidence defense: strip fabricated evidence_ids
+    # §15 hallucination defenses: evidence refs + ATT&CK mappings
+
     validation_report = validate_evidence(store, inc_id, results)
+    attack_report = validate_attack_mapping(store, inc_id, results)
 
     # §18 audit + step-record persistence (#4/#5)
     evidence_ids_released = [ev.id for ev in
@@ -274,6 +281,39 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
             audit.record("tool_call", inc_id, actor=c["agent"],
                          tool=c["tool"], ok=c["ok"], error=c["error"])
         store.add_record("toolcall", inc_id, c)
+    if audit is not None and attack_report:
+        audit.record("attack_mapping_validation", inc_id, actor="validator",
+                     report=attack_report)
+
+    # §14/§21 ATT&CK mapping persistence + graph edges
+    attack_mappings: list[dict] = []
+    for agent_id in ("A4", "A5"):
+        r = results.get(agent_id)
+        techniques = (r.data.get("attack_techniques")
+                      if r and getattr(r, "data", None) else None)
+        if isinstance(techniques, list) and techniques:
+            attack_mappings = [
+                t for t in techniques if isinstance(t, dict) and t.get("id")]
+            break
+    if attack_mappings:
+        store.add_record("attack_mapping", inc_id, {
+            "techniques": attack_mappings,
+            "data_version": attack_store.ATTACK_DATA_VERSION,
+        })
+        evidence_by_id = {ev.id: ev for ev in store.evidence(inc_id)}
+        for t in attack_mappings:
+            for ev_id in t.get("evidence_ids", []):
+                ev = evidence_by_id.get(ev_id)
+                if ev is None:
+                    continue
+                store.add_record("edge", inc_id, {
+                    "src_type": "evidence", "src_id": f"ev:{ev.id}",
+                    "relationship": "MAPPED_TO",
+                    "dst_type": "technique",
+                    "dst_id": f"technique:{t['id']}",
+                    "confidence": t.get("confidence", 0.5),
+                    "ts": datetime.now(UTC).isoformat(),
+                })
 
     if any(not s.ok for s in steps):
         orch.transition(inc_id, IncidentState.ESCALATED,
@@ -318,6 +358,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         policy_versions=[decision.policy_version],
         tool_schema_version=TOOL_SCHEMA_VERSION,
     )
+    manifest["attack_data_version"] = attack_store.ATTACK_DATA_VERSION
     store.add_record("manifest", inc_id, manifest)
 
     if decision.decision == Decision.DENY:

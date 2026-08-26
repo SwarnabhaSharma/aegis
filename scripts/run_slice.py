@@ -31,7 +31,11 @@ if __name__ == "__main__":
     print(f"trace: {' -> '.join(res['trace'])}")
     print(f"evidence persisted: {res.get('evidence_count', 0)}")
     for r in res.get("related", []):
-        print(f"related: {r['incident_id']} shares {', '.join(r['shared'])}")
+        if "shared" in r:  # legacy scan format
+            print(f"related: {r['incident_id']} shares {', '.join(r['shared'])}")
+        else:  # graph edge format (WP-C)
+            print(f"related: {r['src_id']} -> {r['dst_id']} "
+                  f"[{r.get('relationship', 'SHARED_INDICATOR')}]")
     if "decision" in res:
         d = res["decision"]
         print(f"policy: {d.decision.value} ({d.reason})")

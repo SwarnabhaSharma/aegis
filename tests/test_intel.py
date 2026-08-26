@@ -11,7 +11,7 @@ from aegis.intel.correlation import find_related
 def test_lookup_known_technique():
     t = attack.lookup("T1059.001")
     assert t["name"] == "PowerShell"
-    assert t["tactic"] == "Execution"
+    assert "execution" in t["tactics"]
 
 
 def test_lookup_unknown_returns_none():
@@ -25,6 +25,25 @@ def test_match_keywords_powershell_chain():
     assert "T1566.001" in ids
     assert "T1027" in ids
     assert "T1071.001" in ids
+
+
+def test_match_keywords_ranked():
+    # text matching many keywords of one technique ranks it first
+    hits = attack.match_keywords("powershell -enc encodedcommand iex invoke-expression")
+    assert hits[0]["id"] == "T1059.001"
+
+
+def test_matrix_loaded_from_data_file():
+    from aegis.intel import attack
+
+    assert len(attack.TECHNIQUES) > 100  # full STIX matrix ingested
+    assert attack.ATTACK_DATA_VERSION.startswith("stix-")
+
+
+def test_match_keywords_limit():
+    hits = attack.match_keywords("powershell -enc base64 https beacon "
+                                 "downloadstring certutil lsass exfil")
+    assert len(hits) <= 12
 
 
 def test_match_keywords_empty():
