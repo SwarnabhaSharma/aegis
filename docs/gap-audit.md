@@ -46,7 +46,7 @@
 | A1 Triage | PRESENT | agentic-capable |
 | A2 Investigation | PRESENT | agentic over real tools |
 | A3 Correlation | PRESENT | shared-IOC correlation live since evidence persistence |
-| A4 Threat Analysis | PARTIAL | ATT&CK subset = 8 techniques; TI static local store |
+| A4 Threat Analysis | PRESENT | matrix-backed ATT&CK (697 techniques, STIX ingestion); structured attack_techniques output; validation gate (`b7d8120`) |
 | A5 Response Planner | PRESENT | fetches policy itself via registry |
 | Response Agent (D1) | DEFERRED (ADR-013) | simulated executor until real backend phase |
 | Verification Agent (D2) | PARTIAL | service exists; 3 of 4 verify methods unreachable (no producing action) (#11) |
@@ -189,7 +189,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Requirement | Status | Notes |
 |---|---|---|
 | Reproducible corpus | PRESENT | evals/corpus.json: 6 labeled scenarios incl. telemetry-injection (`b19e0e5`); multi-stage corpus growth pending |
-| Metrics runner | PRESENT | scripts/run_eval.py: precision/recall on investigate decision, unsafe-action count, injection detection, escalation + fabrication rates -> json+md reports; live Ornith run: P=1.0 R=1.0 FP=0 (`b19e0e5`) |
+| Metrics runner | PRESENT | scripts/run_eval.py: precision/recall on investigate decision, unsafe-action count, injection detection, escalation + fabrication rates, mapping precision/recall -> json+md reports; live Ornith run: P=1.0 R=1.0 FP=0, mapping P=0.25 R=0.2 (`b7d8120`) |
 | Deterministic-baseline comparison | ABSENT | optional stretch, remains open |
 
 ## §21 Versioning & reproducibility
@@ -200,7 +200,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Model version recording | PRESENT | manifest via LLMClient.model_tag (`bb18bd2`) |
 | Prompt ids/versioning | PRESENT | PROMPT_VERSION const in reasoning.py (`bb18bd2`) |
 | Tool schema versions | PRESENT | TOOL_SCHEMA_VERSION in registry (`bb18bd2`) |
-| Per-incident version manifest block | PRESENT | record:manifest + slice result (`bb18bd2`) |
+| Per-incident version manifest block | PRESENT | record:manifest + slice result; includes attack_data_version (`b7d8120`) |
 
 ## §26 DoD discipline
 
@@ -254,6 +254,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | WP-D audit completion | hash-chain tamper evidence; data requested/released/withheld; retry counts | 18, 26 | **DONE 2ace218** |
 | WP-F privacy depth | reversible tokenization vault; task minimization; RoleViews | 10 | **DONE 6735668** |
 | WP-H eval expansion | corpus v2 multi-stage/incomplete; baseline comparator; audit assertion | 20, 26 | **DONE 5dbece7** |
+| ATT&CK mapping | STIX matrix ingestion (697 techniques); structured A4 output; validation gate; MAPPED_TO edges; mapping precision/recall metrics | 14, 21, 20 | **DONE b7d8120** |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
 
