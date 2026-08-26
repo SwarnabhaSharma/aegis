@@ -1,7 +1,7 @@
 # Aegis Gap Audit — Living Tracker
 
 - **Source of truth**: `D:\Resume\Aegis — Master Project Architecture Prompt — Polished.md` (§3–§29)
-- **Audit date**: 2026-08-23 (baseline `c53d00b`; T1 `bb18bd2`; T2 `81a600f`; T3 `318f3e1`; **T4 eval+portfolio `b19e0e5`+`c4df273`**)
+- **Audit date**: 2026-08-23 (baseline `c53d00b`; T1-T4 done; **partial-completion WPs: A `90b1d27`, C `a64ccf2`, G `f616075`, B `dcadd29`, E `c9fa99b`, D `2ace218`, F `6735668`, H `5dbece7`**)
 - **Legend**:
   - `PRESENT` — built, meets spec
   - `PARTIAL` — exists, below spec (notes name the delta)
@@ -64,13 +64,13 @@
 | terminate_process / block_indicator / disable_account / remove_persistence | PARTIAL | terminate/block/remove built + verified (`81a600f`); disable_account pending (needs Identity entity) |
 | verify_host_isolated / process_terminated / indicator_blocked / persistence_removed | PRESENT | all reachable — executor produces state, verifier reads it (`81a600f`, #11 closed) |
 | Typed input schema | PRESENT | loose dict types |
-| Typed output schema | ABSENT | not declared on Tool |
+| Typed output schema | PRESENT | schema_out declared + shape-checked (`c9fa99b`) |
 | Authorization + permitted agents | PRESENT | registry-enforced gate |
 | Risk classification | PRESENT | READ/LOW/MEDIUM/HIGH |
 | Audit logging per tool call | PRESENT | registry `.calls` capture + AuditRecorder (`bb18bd2`, #4 closed) |
-| Timeout enforcement | PARTIAL | field exists, never enforced |
-| Retry behavior | PARTIAL | field exists, never used |
-| Rate limits | ABSENT | |
+| Timeout enforcement | PRESENT | thread-pool future per call (`c9fa99b`; hung-worker leak documented) |
+| Retry behavior | PRESENT | retry=safe auto-retries once for idempotent tools (`c9fa99b`) |
+| Rate limits | PRESENT | per-tool token bucket (`c9fa99b`) |
 | Idempotency | PRESENT | executor dedupes by key |
 
 ## §9 Security authority model
@@ -87,10 +87,10 @@
 | Secret/credential detection | PRESENT (minimal) | credential kv / AWS keys / JWT / private-key headers (`318f3e1`) |
 | Data classification engine | PARTIAL | normal/pii/secret levels on Evidence at collection; richer taxonomy pending |
 | Redaction | PRESENT (minimal) | [REDACTED:kind] masking before AI-visible views (`318f3e1`) |
-| Tokenization | ABSENT | deferred (ADR-003 sequencing) |
-| Field-level access control | PARTIAL | per-tool AI-visible dict allowlist + withheld-keys report; role-based views pending |
-| Contextual minimization | ABSENT | task-based minimization pending |
-| Four representations (raw/filtered/AI-visible/analyst-visible) | PARTIAL | raw + AI-visible distinct (`318f3e1`); privacy-filtered store representation pending |
+| Tokenization | PRESENT | reversible per-incident vault; analyst reveal (`6735668`) |
+| Field-level access control | PRESENT (minimal) | per-tool allowlist + RoleView AI/analyst split + task-based minimization profiles (`6735668`) |
+| Contextual minimization | PARTIAL | task-based event profiles per agent (6735668); prompt-level minimization pending |
+| Four representations (raw/filtered/AI-visible/analyst-visible) | PARTIAL | raw/AI-visible/analyst distinct (`318f3e1`,`6735668`); filtered store snapshot pending |
 | Auditable privacy decisions ("why received / why withheld") | PRESENT (minimal) | privacy_redaction audit events with where/kinds/reason (`318f3e1`) |
 | Dimension analysis (field/role/agent/task/incident/asset/context) | ABSENT | documented design question, Phase 8 |
 
@@ -99,7 +99,7 @@
 | Requirement | Status | Notes |
 |---|---|---|
 | Static per-agent tool sets | PRESENT | registry allowed_agents |
-| Conditional dimensions (state/criticality/confidence/time-based) | ABSENT | unmodeled |
+| Conditional dimensions | PARTIAL | state/confidence/criticality gates via PermissionContext (`dcadd29`); time/environment pending |
 
 ## §13 Policy engine
 
@@ -108,7 +108,7 @@
 | Pure evaluate() ALLOW/APPROVE/DENY | PRESENT | no LLM involvement |
 | Versioned decisions | PRESENT | policy_version on every decision |
 | Conflict → DENY fail-safe | PRESENT | simplified agree-or-DENY |
-| Most-specific precedence | PARTIAL | simplified away (#12) |
+| Most-specific precedence | PRESENT | condition-count specificity, version tiebreak, generalized fallback (`dcadd29`) |
 | Emergency override | PARTIAL | engine fn exists; no API/control-surface endpoint |
 | Dry-run mode | PRESENT | flag on record |
 | YAML policy files | ABSENT | Python dicts by choice (lazy pick #3, revisit if ops demand) |
@@ -118,10 +118,10 @@
 | Requirement | Status | Notes |
 |---|---|---|
 | Provenance/timestamps/source/method/raw-ref/classification | PRESENT | Evidence model |
-| Confidence-per-evidence | ABSENT | |
-| Relationships / evidence graph | ABSENT | simpler model chosen; justification doc owed |
-| Contradictory evidence handling | ABSENT | |
-| Evidence expiration | ABSENT | |
+| Confidence-per-evidence | PRESENT | Evidence.confidence (graph edges carry it too) (`a64ccf2`) |
+| Relationships / evidence graph | PRESENT | full typed graph, ADR-021 (`a64ccf2`) |
+| Contradictory evidence handling | PARTIAL | contradicts field + validator surfacing; A3 emission logic pending |
+| Evidence expiration | PRESENT | valid_until checked by validator (a64ccf2) |
 | Conclusions linked to existing evidence (D-008 enforcement) | PRESENT | validate_evidence strips fabricated refs (`bb18bd2`) |
 
 ## §15 Adversarial security
@@ -133,7 +133,7 @@
 | Tool abuse | PRESENT | registry authorization |
 | Privilege escalation | PRESENT | static permission sets |
 | Data exfiltration | PARTIAL | tool scope bounds reads; no minimization layer |
-| Malicious threat intelligence | ABSENT | N/A until external TI source exists |
+| Malicious threat intelligence | PARTIAL | provider framework + guards shipped (f616075); responses enter prompts via untrusted wrapping; live-feed corpus scenarios pending |
 | Agent loops | PRESENT | no agent→agent calls; budgets |
 | Excessive tool calls | PRESENT | real budget accounting |
 | Hallucinated evidence | PRESENT | validation strips + flags fabricated refs (`bb18bd2`, #6 closed) |
@@ -169,7 +169,7 @@
 | Transitions + timeline records | PRESENT | incidents-steps index |
 | Policy version capture | PRESENT | on every decision |
 | audit-* index + AuditEvent entity | PRESENT | `audit.py` AuditRecorder + aegis-dev-audit sink (`bb18bd2`, #4 closed) |
-| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PARTIAL | pipeline stages/tool calls/policy/injection/validation captured; data-requested/released/withheld + retries pending (needs privacy §10) |
+| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PARTIAL | pipeline stages/tool calls/policy/injection/validation captured; data-requested/released/withheld + retries captured (2ace218); remaining: §10) |
 | AgentRun / ToolCall persisted records | PRESENT | record:agentrun + record:toolcall via add_record (`bb18bd2`, #5 closed) |
 | Tamper protection (hash chain) | ABSENT | post-#4 layer |
 
@@ -178,7 +178,7 @@
 | Entity | Status |
 |---|---|
 | Incident / Alert / TimelineEvent / Evidence / Transition | PRESENT |
-| Asset / Identity / Indicator | ABSENT (#9 asset = hardcoded dict) |
+| Asset / Identity / Indicator | PRESENT | record-kind entities; criticality from records, map = fallback (90b1d27, #9 retired) |
 | AgentRun / ToolCall / PolicyDecision-persisted / Approval / ResponseAction-persisted / Verification-persisted | PARTIAL | agentrun/toolcall/policy/verification persisted (`bb18bd2`); Approval + ResponseAction records still transient (#5 remainder) |
 | AuditEvent | PRESENT | aegis-dev-audit sink (`bb18bd2`) |
 
@@ -246,6 +246,14 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | T2 Controls + tools | emergency controls; get_file_activity (+auth/host reads); response tools ↔ verifier seams; ActionSpec struct; executor-via-registry | §17, §8, §16, §9(#7), §7(#11) | **DONE `81a600f`** — #7, #8(core), #11 closed (disable_account + timeout enforcement remain) |
 | T3 Minimal privacy layer | detect→classify→AI-visible allowlist per agent/task→logged decisions | §10(minimal), §27 privacy step | **DONE `318f3e1`** — #9 (asset map) remains, folds into T4 context work |
 | T4 Eval + portfolio | corpus + metrics runner; README; diagrams; threat model; CI | §20, §26, §28(foundation), §29 | **DONE `b19e0e5`+`c4df273`** — #12 closed (console UI views remain §28 backlog) |
+| WP-A entities | Asset/Identity records; store-based criticality; disable_account+verify (#9) | 19, 11(criticality) | **DONE 90b1d27** |
+| WP-C evidence graph | full typed graph, ADR-021; confidence/expiry/contradiction; A3 subgraph | 14 | **DONE a64ccf2** |
+| WP-G TI framework | N-provider chain + AbuseIPDB/VT/OTX/NVD; guards (private-range/cache/rate-limit/degrade); lookup_cve | 15, 8(intel) | **DONE f616075** |
+| WP-B precedence+permissions | most-specific-wins; PermissionContext gates (state/confidence/criticality) | 13, 11 | **DONE dcadd29** |
+| WP-E contract mechanics | timeout enforcement; rate limits; retry=safe; schema_out; read ActionSpecs | 8, 16 | **DONE c9fa99b** |
+| WP-D audit completion | hash-chain tamper evidence; data requested/released/withheld; retry counts | 18, 26 | **DONE 2ace218** |
+| WP-F privacy depth | reversible tokenization vault; task minimization; RoleViews | 10 | **DONE 6735668** |
+| WP-H eval expansion | corpus v2 multi-stage/incomplete; baseline comparator; audit assertion | 20, 26 | **DONE 5dbece7** |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
 
