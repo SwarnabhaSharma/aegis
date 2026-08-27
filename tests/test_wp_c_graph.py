@@ -141,5 +141,8 @@ def test_validator_treats_expired_evidence_as_absent():
 def test_graph_justification_documented():
     import re
 
-    src = open(r"D:\Resume\Aegis\docs\adr.md", encoding="utf-8").read()
+    from pathlib import Path
+
+    adr = Path(__file__).resolve().parent.parent / "docs" / "adr.md"
+    src = adr.read_text(encoding="utf-8")
     assert re.search(r"ADR-021", src), "ADR-021 (evidence graph) missing"
