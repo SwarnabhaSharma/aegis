@@ -61,7 +61,7 @@
 | lookup_ip / domain / hash | PRESENT | rich TI shape |
 | get_threat_intelligence | ABSENT | aggregate intel tool |
 | isolate_host | PRESENT | idempotent, simulated backend |
-| terminate_process / block_indicator / disable_account / remove_persistence | PARTIAL | terminate/block/remove built + verified (`81a600f`); disable_account pending (needs Identity entity) |
+| terminate_process / block_indicator / disable_account / remove_persistence | PRESENT | all 4 tools built + verified + ActionSpec'd (`81a600f`, `57e221f`) |
 | verify_host_isolated / process_terminated / indicator_blocked / persistence_removed | PRESENT | all reachable — executor produces state, verifier reads it (`81a600f`, #11 closed) |
 | Typed input schema | PRESENT | loose dict types |
 | Typed output schema | PRESENT | schema_out declared + shape-checked (`c9fa99b`) |
@@ -99,7 +99,7 @@
 | Requirement | Status | Notes |
 |---|---|---|
 | Static per-agent tool sets | PRESENT | registry allowed_agents |
-| Conditional dimensions | PARTIAL | state/confidence/criticality gates via PermissionContext (`dcadd29`); time/environment pending |
+| Conditional dimensions | PRESENT | state/confidence/criticality/time/environment gates via PermissionContext (`57e221f`) |
 
 ## §13 Policy engine
 
@@ -109,7 +109,7 @@
 | Versioned decisions | PRESENT | policy_version on every decision |
 | Conflict → DENY fail-safe | PRESENT | simplified agree-or-DENY |
 | Most-specific precedence | PRESENT | condition-count specificity, version tiebreak, generalized fallback (`dcadd29`) |
-| Emergency override | PARTIAL | engine fn exists; no API/control-surface endpoint |
+| Emergency override | PRESENT | engine fn + `POST /incidents/{id}/override` endpoint (`57e221f`) |
 | Dry-run mode | PRESENT | flag on record |
 | YAML policy files | ABSENT | Python dicts by choice (lazy pick #3, revisit if ops demand) |
 
@@ -120,7 +120,7 @@
 | Provenance/timestamps/source/method/raw-ref/classification | PRESENT | Evidence model |
 | Confidence-per-evidence | PRESENT | Evidence.confidence (graph edges carry it too) (`a64ccf2`) |
 | Relationships / evidence graph | PRESENT | full typed graph, ADR-021 (`a64ccf2`) |
-| Contradictory evidence handling | PARTIAL | contradicts field + validator surfacing; A3 emission logic pending |
+| Contradictory evidence handling | PRESENT | contradicts field populated by `_detect_contradictions()` (`57e221f`); A3 emission logic in pipeline |
 | Evidence expiration | PRESENT | valid_until checked by validator (a64ccf2) |
 | Conclusions linked to existing evidence (D-008 enforcement) | PRESENT | validate_evidence strips fabricated refs (`bb18bd2`) |
 
@@ -146,7 +146,7 @@
 |---|---|---|
 | isolate_host full safety profile | PRESENT | ActionSpec on tool (`81a600f`) |
 | terminate_process / block_indicator full safety profile | PRESENT | ActionSpec: expected/verify/rollback/failure (`81a600f`) |
-| Structured ActionSpec (expected result/rollback/timeout/failure→escalation) for all actions | PARTIAL | response tools spec'd; timeout enforcement + read-tool specs pending |
+| Structured ActionSpec (expected result/rollback/timeout/failure→escalation) for all actions | PRESENT | all tools (read + response) spec'd (`57e221f`) |
 | "HTTP 200 ≠ success" | PRESENT | D2 independent verification |
 
 ## §17 Human override & emergency controls
@@ -179,7 +179,7 @@
 |---|---|
 | Incident / Alert / TimelineEvent / Evidence / Transition | PRESENT |
 | Asset / Identity / Indicator | PRESENT | record-kind entities; criticality from records, map = fallback (90b1d27, #9 retired) |
-| AgentRun / ToolCall / PolicyDecision-persisted / Approval / ResponseAction-persisted / Verification-persisted | PARTIAL | agentrun/toolcall/policy/verification persisted (`bb18bd2`); Approval + ResponseAction records still transient (#5 remainder) |
+| AgentRun / ToolCall / PolicyDecision-persisted / Approval / ResponseAction-persisted / Verification-persisted | PRESENT | all record kinds persisted (`57e221f`) |
 | AuditEvent | PRESENT | aegis-dev-audit sink (`bb18bd2`) |
 
 Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeline/record:*) · `audit-*` ✅ (`bb18bd2`) · `telemetry-*` ✅ read-only.
@@ -208,7 +208,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 |---|---|---|
 | Tests incl. error/unauthorized cases per feature | PRESENT | 75 tests |
 | Written per-feature DoD before implementation | ABSENT | process change, adopt from T1 onward |
-| Audit-event generation asserted in tests | PARTIAL | recorder unit-tested; slice-level assertion pending |
+| Audit-event generation asserted in tests | PRESENT | recorder unit-tested + `test_slice_generates_audit_events` (`57e221f`) |
 
 ## §27 First vertical slice
 
@@ -256,6 +256,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | WP-F privacy depth | reversible tokenization vault; task minimization; RoleViews | 10 | **DONE 6735668** |
 | WP-H eval expansion | corpus v2 multi-stage/incomplete; baseline comparator; audit assertion | 20, 26 | **DONE 5dbece7** |
 | ATT&CK mapping | STIX matrix ingestion (697 techniques); structured A4 output; validation gate; MAPPED_TO edges; mapping precision/recall metrics | 14, 21, 20 | **DONE b7d8120** |
+| Tier 1 quick wins | persist Approval/ResponseAction records; contradicts edges; time/env permission dims; override endpoint; audit test; read-tool ActionSpecs | 19, 14, 11, 17, 26, 16, 8 | **DONE 57e221f** |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
 
