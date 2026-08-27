@@ -7,5 +7,7 @@ pydantic-settings
 python-dotenv
 structlog
 httpx
+jinja2
+python-multipart
 pytest
 ruff
