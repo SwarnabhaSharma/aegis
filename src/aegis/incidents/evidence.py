@@ -19,6 +19,7 @@ class Evidence(BaseModel):
     observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw_ref: str = ""
     classification: str = "normal"
+    provenance: str = "real"  # §3.4: "real" (telemetry) | "synthetic" (seeded/test)
     confidence: float = 0.5  # §14: per-evidence confidence (source-derived)
     valid_until: datetime | None = None  # §14: expiration; None = indefinite
     contradicts: list[str] = Field(default_factory=list)  # §14: ids this contradicts
@@ -33,7 +34,8 @@ class TimelineEntry(BaseModel):
     detail: str = ""
 
 
-def evidence_from_tool_result(incident_id: str, tool: str, events: list) -> list[Evidence]:
+def evidence_from_tool_result(incident_id: str, tool: str, events: list,
+                              provenance: str = "real") -> list[Evidence]:
     from aegis.privacy import classification_level, detect
 
     def _raw_ref(e) -> str:
@@ -59,6 +61,7 @@ def evidence_from_tool_result(incident_id: str, tool: str, events: list) -> list
             collection_method=tool,
             raw_ref=_raw_ref(e),
             classification=level,
+            provenance=provenance,
             data={
                 "host": e.host,
                 "event_id": e.event_id,

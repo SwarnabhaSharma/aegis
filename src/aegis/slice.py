@@ -199,6 +199,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
 
     # evidence: prefetch through the registry (agentic mode agents also fetch
     # their own); explicit events override (eval corpus); else canned story.
+    prov = "real"
     if events is not None:
         evidence_events = list(events)
     elif registry is not None:
@@ -207,9 +208,11 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         evidence_events = list(proc_tree) + list(net)
     else:
         evidence_events = _synthetic_events(host)
+        prov = "synthetic"
 
     evidence_records = evidence_from_tool_result(inc_id, "read_tools",
-                                                 evidence_events)
+                                                 evidence_events,
+                                                 provenance=prov)
     # §14 contradiction detection: find evidence that conflicts on same entity
     _detect_contradictions(evidence_records)
     for ev in evidence_records:
@@ -408,7 +411,8 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
 
 
 def execute_and_verify(store, inc_id: str, host: str,
-                       max_retries: int = 2, controls=None) -> list:
+                       max_retries: int = 2, controls=None,
+                       actions: list[str] | None = None) -> list:
     """AUTHORIZED -> EXECUTING -> VERIFYING -> RESOLVED | ESCALATED.
 
     Execution goes through the response-tool registry gate (#7): D1
@@ -422,29 +426,56 @@ def execute_and_verify(store, inc_id: str, host: str,
     reg = build_response_tools(ex, controls=controls)
 
     orch.transition(inc_id, IncidentState.EXECUTING, "orchestrator", "execute")
-    reg.call("isolate_host", "D1", host=host, incident_id=inc_id)
     from datetime import UTC, datetime
 
-    store.add_record("response_action", inc_id, {
-        "action": "isolate_host", "target": host, "actor": "D1",
-        "timestamp": datetime.now(UTC).isoformat(),
-    })
+    # default: isolate only; caller can request additional actions
+    action_list = actions or ["isolate_host"]
+    for act in action_list:
+        if act == "isolate_host":
+            reg.call("isolate_host", "D1", host=host, incident_id=inc_id)
+        elif act == "terminate_process":
+            reg.call("terminate_process", "D1", host=host, pid="0",
+                     incident_id=inc_id)
+        elif act == "block_indicator":
+            reg.call("block_indicator", "D1", indicator=host,
+                     incident_id=inc_id)
+        elif act == "remove_persistence":
+            reg.call("remove_persistence", "D1", host=host, incident_id=inc_id)
+        elif act == "disable_account":
+            reg.call("disable_account", "D1", username=host, incident_id=inc_id)
+        store.add_record("response_action", inc_id, {
+            "action": act, "target": host, "actor": "D1",
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
     orch.transition(inc_id, IncidentState.VERIFYING, "orchestrator", "verify")
 
+    # verify each executed action
+    verify_methods = {
+        "isolate_host": lambda: vf.verify_host_isolated(host, inc_id),
+        "terminate_process": lambda: vf.verify_process_terminated(host, "0", inc_id),
+        "block_indicator": lambda: vf.verify_indicator_blocked(host, inc_id),
+        "remove_persistence": lambda: vf.verify_persistence_removed(host, inc_id),
+        "disable_account": lambda: vf.verify_account_disabled(host, inc_id),
+    }
+
     verifications = []
-    while True:
-        v = vf.verify_host_isolated(host, inc_id)
+    for act in action_list:
+        v = verify_methods[act]()
         verifications.append(v)
         store.add_record("verification", inc_id, {
             "action": v.action, "target": v.target, "expected": v.expected,
             "actual": v.actual, "passed": v.passed,
         })
         nxt = vf.next_state(v)
-        orch.transition(inc_id, nxt, "orchestrator", f"verify {v.actual}")
-        if nxt in (IncidentState.RESOLVED, IncidentState.ESCALATED):
-            return verifications
-        orch.transition(inc_id, IncidentState.INVESTIGATING,
-                        "orchestrator", "reopen")
+        if not v.passed:
+            orch.transition(inc_id, nxt, "orchestrator", f"verify {v.actual}")
+            if nxt == IncidentState.ESCALATED:
+                return verifications
+            orch.transition(inc_id, IncidentState.INVESTIGATING,
+                            "orchestrator", "reopen")
+
+    orch.transition(inc_id, IncidentState.RESOLVED, "orchestrator", "all verified")
+    return verifications
 
 
 def run_full_slice(host: str = "win-vm", llm_mode: str = "real",

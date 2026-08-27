@@ -399,6 +399,22 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         func=_lookup_cve,
     ))
     reg.register(Tool(
+        name="get_threat_intelligence",
+        schema_in={"indicators": list},
+        risk_class=READ,
+        reversible=True,
+        allowed_agents={AGENT_THREAT, AGENT_CORRELATION},
+        schema_out="list",
+        requires={"min_state": "ASSESSING"},
+        spec={"expected_result": "aggregated TI data for all indicators",
+              "verification_method": "n/a (read-only)", "rollback": "n/a",
+              "failure_behavior": "error observation, non-fatal"},
+        func=lambda indicators: [
+            ti_chain.lookup(i) if ti_chain else ti.lookup(i)
+            for i in indicators
+        ],
+    ))
+    reg.register(Tool(
         name="get_policy",
         schema_in={"incident_type": str},
         risk_class=READ,

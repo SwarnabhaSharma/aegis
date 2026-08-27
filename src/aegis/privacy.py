@@ -24,7 +24,7 @@ _COMPILED = {k: re.compile(v) for k, v in _PATTERNS.items()}
 # kind -> classification level (higher wins)
 _LEVELS = {"credential": "secret", "aws_access_key": "secret", "jwt": "secret",
            "private_key": "secret", "ssn": "secret", "email": "pii"}
-_ORDER = ["normal", "pii", "secret"]
+_ORDER = ["normal", "internal", "pii", "confidential", "secret", "restricted"]
 
 
 def detect(text: str) -> list[str]:
