@@ -1,0 +1,210 @@
+:root {
+  --bg: #0f1115;
+  --panel: #1a1d24;
+  --border: #2a2f3a;
+  --text: #e4e6eb;
+  --muted: #8b95a7;
+  --accent: #4a9eff;
+  --green: #34d399;
+  --yellow: #fbbf24;
+  --red: #f87171;
+  --orange: #fb923c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+}
+
+.sidebar h1 {
+  font-size: 18px;
+  margin: 0 20px 20px;
+  color: var(--accent);
+}
+
+.sidebar nav a {
+  display: block;
+  padding: 10px 20px;
+  color: var(--muted);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+}
+
+.sidebar nav a:hover,
+.sidebar nav a.active {
+  color: var(--text);
+  background: rgba(74, 158, 255, 0.08);
+  border-left-color: var(--accent);
+}
+
+.main {
+  padding: 24px 32px;
+  overflow-x: auto;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 20px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+h3 {
+  font-size: 16px;
+  margin: 24px 0 8px;
+  color: var(--muted);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+th, td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  background: var(--panel);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-new { background: #1e3a8a; color: #93c5fd; }
+.badge-triaging { background: #374151; color: #d1d5db; }
+.badge-investigating, .badge-correlating, .badge-assessing { background: #4b5563; color: #e5e7eb; }
+.badge-response_planned, .badge-authorized, .badge-executing, .badge-verifying { background: #065f46; color: #6ee7b7; }
+.badge-awaiting_approval { background: #92400e; color: #fcd34d; }
+.badge-resolved { background: #14532d; color: #86efac; }
+.badge-failed, .badge-escalated { background: #7f1d1d; color: #fca5a5; }
+.badge-reopened { background: #831843; color: #f9a8d4; }
+
+.badge-critical, .badge-high { background: #7f1d1d; color: #fca5a5; }
+.badge-medium { background: #92400e; color: #fcd34d; }
+.badge-low, .badge-info { background: #1f2937; color: #9ca3af; }
+
+.kv {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 6px 16px;
+  margin: 8px 0;
+}
+
+.kv dt { color: var(--muted); font-size: 12px; }
+.kv dd { margin: 0; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  margin: 12px 0;
+}
+
+pre {
+  background: #0a0c10;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+
+code { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
+
+.empty {
+  color: var(--muted);
+  font-style: italic;
+  padding: 24px;
+  text-align: center;
+}
+
+.btn {
+  display: inline-block;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn:hover { background: #3b82f6; text-decoration: none; }
+.btn-secondary { background: var(--border); }
+.btn-secondary:hover { background: #3a3f4a; }
+
+.controls-panel {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+.section {
+  margin: 24px 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+.tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+}
+
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.muted { color: var(--muted); }
+.mono { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }

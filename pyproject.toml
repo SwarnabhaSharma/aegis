@@ -3,6 +3,11 @@ name = "aegis"
 version = "0.1.0"
 description = "Aegis — Autonomous Security Incident Operations Platform"
 requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.6",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

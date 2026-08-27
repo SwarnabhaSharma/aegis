@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Incident {{ incident.id[:12] }} — Aegis{% endblock %}
+{% block content %}
+<h2>Incident <span class="mono">{{ incident.id[:16] }}</span></h2>
+
+<div class="card">
+  <dl class="kv">
+    <dt>State</dt><dd><span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></dd>
+    <dt>Severity</dt><dd><span class="badge badge-{{ incident.severity }}">{{ incident.severity }}</span></dd>
+    <dt>Type</dt><dd>{{ incident.type }}</dd>
+    <dt>Source</dt><dd class="mono">{{ incident.fields.get('source', '-') }}</dd>
+    <dt>Host</dt><dd class="mono">{{ incident.fields.get('host', '-') }}</dd>
+    <dt>Process</dt><dd class="mono">{{ incident.fields.get('process', '-') }}</dd>
+    <dt>PID</dt><dd class="mono">{{ incident.fields.get('pid', '-') }}</dd>
+    <dt>Parent</dt><dd class="mono">{{ incident.fields.get('parent', '-') }}</dd>
+    <dt>Command line</dt><dd class="mono">{{ incident.fields.get('command_line', '-') }}</dd>
+    <dt>Version</dt><dd>{{ incident.version }}</dd>
+    <dt>Created</dt><dd class="mono">{{ incident.created_at }}</dd>
+    <dt>Updated</dt><dd class="mono">{{ incident.updated_at }}</dd>
+  </dl>
+</div>
+
+{% if records.get('attack_mapping') %}
+<div class="card">
+  <h3>ATT&CK Mapping</h3>
+  {% for mapping in records.attack_mapping %}
+  <p class="muted">Data version: <span class="mono">{{ mapping.get('data_version', '?') }}</span></p>
+  <table>
+    <thead><tr><th>Technique</th><th>Name</th><th>Confidence</th><th>Evidence IDs</th></tr></thead>
+    <tbody>
+      {% for t in mapping.get('techniques', []) %}
+      <tr>
+        <td class="mono">{{ t.id }}</td>
+        <td>{{ t.get('name', '-') }}</td>
+        <td>{{ "%.0f"|format(t.get('confidence', 0) * 100) }}%</td>
+        <td class="mono">{{ t.get('evidence_ids', [])|join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if records.get('policy') %}
+<div class="card">
+  <h3>Policy Decision</h3>
+  {% for p in records.policy %}
+  <dl class="kv">
+    <dt>Action</dt><dd class="mono">{{ p.get('action', '?') }}</dd>
+    <dt>Decision</dt><dd><span class="badge badge-{{ p.get('decision', '').lower() }}">{{ p.get('decision', '?') }}</span></dd>
+    <dt>Reason</dt><dd>{{ p.get('reason', '-') }}</dd>
+    <dt>Policy version</dt><dd class="mono">{{ p.get('policy_version', '?') }}</dd>
+  </dl>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Agent Activity</h3>
+  {% if records.get('agentrun') %}
+  <table>
+    <thead><tr><th>Agent</th><th>OK</th><th>Degraded</th><th>Error</th><th>LLM attempts</th></tr></thead>
+    <tbody>
+      {% for r in records.agentrun %}
+      <tr>
+        <td class="mono">{{ r.get('agent', '?') }}</td>
+        <td>{{ r.get('ok', '?') }}</td>
+        <td>{{ r.get('degraded', False) }}</td>
+        <td>{{ r.get('error', '-') }}</td>
+        <td>{{ r.get('llm_attempts', 1) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No agent runs recorded yet.</p>
+  {% endif %}
+
+  {% if records.get('toolcall') %}
+  <h3>Tool Calls</h3>
+  <table>
+    <thead><tr><th>Agent</th><th>Tool</th><th>OK</th><th>Error</th></tr></thead>
+    <tbody>
+      {% for t in records.toolcall %}
+      <tr>
+        <td class="mono">{{ t.get('agent', '?') }}</td>
+        <td class="mono">{{ t.get('tool', '?') }}</td>
+        <td>{{ t.get('ok', '?') }}</td>
+        <td>{{ t.get('error', '-') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+{% if records.get('verification') %}
+<div class="card">
+  <h3>Verification</h3>
+  <table>
+    <thead><tr><th>Action</th><th>Target</th><th>Expected</th><th>Actual</th><th>Passed</th></tr></thead>
+    <tbody>
+      {% for v in records.verification %}
+      <tr>
+        <td class="mono">{{ v.get('action', '?') }}</td>
+        <td class="mono">{{ v.get('target', '?') }}</td>
+        <td class="mono">{{ v.get('expected', '?') }}</td>
+        <td class="mono">{{ v.get('actual', '?') }}</td>
+        <td>{{ v.get('passed', '?') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if records.get('manifest') %}
+<div class="card">
+  <h3>Manifest</h3>
+  {% for m in records.manifest %}
+  <dl class="kv">
+    <dt>Model</dt><dd class="mono">{{ m.get('model', '?') }}</dd>
+    <dt>Prompt version</dt><dd class="mono">{{ m.get('prompt_version', '?') }}</dd>
+    <dt>Tool schema version</dt><dd class="mono">{{ m.get('tool_schema_version', '?') }}</dd>
+    <dt>Policy versions</dt><dd class="mono">{{ m.get('policy_versions', [])|join(', ') }}</dd>
+    <dt>Attack data version</dt><dd class="mono">{{ m.get('attack_data_version', '?') }}</dd>
+  </dl>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Evidence ({{ evidence|length }})</h3>
+  {% if evidence %}
+  <table>
+    <thead><tr><th>ID</th><th>Source</th><th>Method</th><th>Classification</th><th>Confidence</th></tr></thead>
+    <tbody>
+      {% for ev in evidence %}
+      <tr>
+        <td class="mono">{{ ev.id }}</td>
+        <td class="mono">{{ ev.get('source', '-') }}</td>
+        <td>{{ ev.get('collection_method', '-') }}</td>
+        <td>{{ ev.get('classification', '-') }}</td>
+        <td>{{ "%.0f"|format(ev.get('confidence', 0) * 100) }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No evidence collected.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Timeline ({{ timeline|length }})</h3>
+  {% if timeline %}
+  <table>
+    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for t in timeline %}
+      <tr>
+        <td class="mono">{{ t.ts }}</td>
+        <td class="mono">{{ t.get('actor', '-') }}</td>
+        <td>{{ t.get('action', '-') }}</td>
+        <td>{{ t.get('detail', '-') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No timeline entries.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Transitions ({{ transitions|length }})</h3>
+  {% if transitions %}
+  <table>
+    <thead><tr><th>Time</th><th>From</th><th>To</th><th>Actor</th><th>Reason</th></tr></thead>
+    <tbody>
+      {% for t in transitions %}
+      <tr>
+        <td class="mono">{{ t.ts }}</td>
+        <td><span class="badge badge-{{ t.from_state.value }}">{{ t.from_state.value }}</span></td>
+        <td><span class="badge badge-{{ t.to_state.value }}">{{ t.to_state.value }}</span></td>
+        <td class="mono">{{ t.get('actor', '-') }}</td>
+        <td>{{ t.get('reason', '-') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No transitions recorded.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

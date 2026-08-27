@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Audit — Aegis{% endblock %}
+{% block content %}
+<h2>Audit Replay ({{ events|length }} events)</h2>
+
+{% if events %}
+<div class="card">
+<table>
+  <thead>
+    <tr><th>Seq</th><th>Category</th><th>Actor</th><th>Incident</th><th>Time</th><th>Hash</th></tr>
+  </thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td class="mono">{{ e.seq }}</td>
+      <td class="mono">{{ e.category }}</td>
+      <td class="mono">{{ e.actor }}</td>
+      <td class="mono">{{ e.incident_id[:12] if e.incident_id else '-' }}</td>
+      <td class="mono">{{ e.ts }}</td>
+      <td class="mono muted">{{ e.hash }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+  <h3>Chain Integrity</h3>
+  <p>Each event's hash covers the previous event's hash + its own payload. Tampering breaks the chain.</p>
+  <p>Showing last 10 hashes:</p>
+  <pre>{% for e in events[-10:] %}{{ e.seq }}: {{ e.hash }}
+{% endfor %}</pre>
+</div>
+{% else %}
+<p class="empty">No audit events recorded. Run an investigation first.</p>
+{% endif %}
+
+{% endblock %}

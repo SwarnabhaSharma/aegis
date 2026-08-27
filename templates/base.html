@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}Aegis Console{% endblock %}</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>AEGIS</h1>
+      <nav>
+        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Incidents</a>
+        <a href="/console/audit" class="{% if request.url.path == '/console/audit' %}active{% endif %}">Audit</a>
+        <a href="/docs" target="_blank">API</a>
+      </nav>
+    </aside>
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

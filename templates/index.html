@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Incidents — Aegis{% endblock %}
+{% block content %}
+<h2>Incidents ({{ incidents|length }})</h2>
+
+<div class="controls-panel">
+  <a href="/?state=awaiting_approval" class="btn btn-secondary">Awaiting Approval</a>
+  <a href="/?state=escalated" class="btn btn-secondary">Escalated</a>
+  <a href="/?state=resolved" class="btn btn-secondary">Resolved</a>
+  <a href="/" class="btn btn-secondary">All</a>
+</div>
+
+<div class="card">
+{% if incidents %}
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>State</th>
+      <th>Severity</th>
+      <th>Type</th>
+      <th>Host</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inc in incidents %}
+    <tr>
+      <td><a href="/incidents/{{ inc.id }}/console">{{ inc.id[:12] }}</a></td>
+      <td><span class="badge badge-{{ inc.state }}">{{ inc.state }}</span></td>
+      <td><span class="badge badge-{{ inc.severity }}">{{ inc.severity }}</span></td>
+      <td>{{ inc.type }}</td>
+      <td class="mono">{{ inc.fields.get('host', '-') }}</td>
+      <td class="muted mono">{{ inc.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No incidents yet. POST to <code>/incidents</code> to create one.</p>
+{% endif %}
+</div>
+
+<div class="card">
+  <h3>Operator Controls</h3>
+  <dl class="kv">
+    <dt>Paused</dt><dd>{{ controls.paused }}</dd>
+    <dt>Safe mode</dt><dd>{{ controls.safe_mode }}</dd>
+    <dt>Require approval all</dt><dd>{{ controls.require_approval_all }}</dd>
+    <dt>Disabled agents</dt><dd>{{ controls.disabled_agents|join(', ') or '—' }}</dd>
+    <dt>Revoked tools</dt><dd>{{ controls.revoked_tools|join(', ') or '—' }}</dd>
+  </dl>
+  <p class="muted">Use the <a href="/docs">API</a> to modify controls (POST /controls/{action}).</p>
+</div>
+{% endblock %}

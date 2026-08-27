@@ -5,8 +5,12 @@ functions. Store selection mirrors the runner (AEGIS_STORE=es).
 """
 
 import os
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from aegis.audit import AuditRecorder
@@ -15,6 +19,8 @@ from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
 from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
+
+_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates"
 
 
 class AlertIn(BaseModel):
@@ -44,6 +50,8 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     from aegis.controls import ControlState
 
     app = FastAPI(title="Aegis", version="0.1.0")
+    _STATIC = Path(__file__).resolve().parents[2] / "static"
+    app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
     st = store or _make_store()
     app.state.store = st  # exposed for tests/introspection
     orch = Orchestrator(st)
@@ -63,6 +71,22 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         inc = ingest_alert(st, alert.source, alert.fields, alert.incident_type)
         return inc.model_dump()
 
+    @app.get("/incidents")
+    def list_incidents(state: str = "", severity: str = ""):
+        """Console UI: list all incidents with optional state/severity filter."""
+        out = []
+        for iid in st.all_incident_ids():
+            inc = st.get(iid)
+            if inc is None:
+                continue
+            if state and inc.state.value != state:
+                continue
+            if severity and inc.severity != severity:
+                continue
+            out.append(inc.model_dump())
+        out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return out
+
     @app.get("/incidents/{incident_id}")
     def get_incident(incident_id: str):
         return _get(incident_id).model_dump()
@@ -72,10 +96,20 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         _get(incident_id)
         return [e.model_dump() for e in st.timeline(incident_id)]
 
+    @app.get("/incidents/{incident_id}/transitions")
+    def get_transitions(incident_id: str):
+        _get(incident_id)
+        return [vars(t) for t in st.transitions(incident_id)]
+
     @app.get("/incidents/{incident_id}/evidence")
     def get_evidence(incident_id: str):
         _get(incident_id)
         return [e.model_dump() for e in st.evidence(incident_id)]
+
+    @app.get("/incidents/{incident_id}/records/{kind}")
+    def get_records(incident_id: str, kind: str):
+        _get(incident_id)
+        return st.records(incident_id, kind)
 
     @app.post("/incidents/{incident_id}/investigate")
     def investigate(incident_id: str):
@@ -170,6 +204,75 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         audit_rec = AuditRecorder(es=getattr(st, "_es", None) if is_es else None)
         audit_rec.record("operator_control", actor="operator", action=action, target=target)
         return get_controls()
+
+    # -- console UI (§28) --
+
+    templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+
+    @app.get("/", response_class=HTMLResponse)
+    def console_index(request: Request):
+        incidents = []
+        for iid in st.all_incident_ids():
+            inc = st.get(iid)
+            if inc is not None:
+                d = inc.model_dump()
+                d["created_at"] = str(d["created_at"])[:19]
+                d["updated_at"] = str(d["updated_at"])[:19]
+                incidents.append(d)
+        incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        controls = {
+            "paused": ctl.paused, "safe_mode": ctl.safe_mode,
+            "require_approval_all": ctl.require_approval_all,
+            "disabled_agents": sorted(ctl.disabled_agents),
+            "revoked_tools": sorted(ctl.revoked_tools),
+        }
+        return templates.TemplateResponse(
+            request, "index.html", {"incidents": incidents, "controls": controls})
+
+    @app.get("/incidents/{incident_id}/console",
+             response_class=HTMLResponse)
+    def console_incident(request: Request, incident_id: str):
+        inc = _get(incident_id)
+        inc_d = inc.model_dump()
+        inc_d["created_at"] = str(inc_d["created_at"])[:19]
+        inc_d["updated_at"] = str(inc_d["updated_at"])[:19]
+        timeline = []
+        for e in st.timeline(incident_id):
+            td = e.model_dump()
+            td["ts"] = str(td["ts"])[:19]
+            timeline.append(td)
+        evidence = [e.model_dump() for e in st.evidence(incident_id)]
+        transitions = []
+        for t in st.transitions(incident_id):
+            tv = vars(t)
+            tv["ts"] = str(tv["ts"])[:19]
+            tv["from_state"] = tv["from_state"].value
+            tv["to_state"] = tv["to_state"].value
+            transitions.append(tv)
+        records = {kind: st.records(incident_id, kind)
+                   for kind in ("agentrun", "toolcall", "policy",
+                                "verification", "manifest", "attack_mapping")}
+        return templates.TemplateResponse(
+            request, "incident.html", {"incident": inc_d,
+                                       "timeline": timeline, "evidence": evidence,
+                                       "transitions": transitions, "records": records,
+                                       "incident_id": incident_id})
+
+    @app.get("/console/audit", response_class=HTMLResponse)
+    def console_audit(request: Request):
+        """Audit replay: reads from the in-memory AuditRecorder's events list
+        (covers the current process). For ES-backed runs use /incidents/{id}/audit
+        via the ES index."""
+        events = []
+        audit_rec = getattr(app.state, "audit_recorder", None)
+        if audit_rec is not None:
+            events = [{"category": e.category, "actor": e.actor,
+                       "ts": e.ts.isoformat(), "incident_id": e.incident_id,
+                       "seq": e.seq, "hash": e.hash[:12],
+                       "detail": e.detail}
+                      for e in audit_rec.events]
+        return templates.TemplateResponse(
+            request, "audit.html", {"events": events})
 
     return app
 
