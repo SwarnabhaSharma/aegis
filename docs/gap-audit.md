@@ -18,7 +18,7 @@
 | Minimum necessary data & authority | PARTIAL | Authority minimal (`state_machine.py`, registry); agents see full context dict — no field minimization (blocked on privacy §10) |
 | AI authority boundary (3.2) | PRESENT | Agents propose-only; state machine rejects agent actor |
 | AI vs deterministic split (3.3) | PRESENT | LLM confined to `agents/reasoning.py`; D1/D2 deterministic |
-| Evidence integrity (3.4) | PARTIAL | Degrade-not-fabricate ✅; evidence_ids validated + fabricated stripped/flagged (`bb18bd2`, #6 closed); synthetic-vs-real provenance flag missing on Evidence |
+| Evidence integrity (3.4) | PRESENT | Degrade-not-fabricate ✅; evidence_ids validated + fabricated stripped/flagged (`bb18bd2`, #6 closed); provenance flag on Evidence (`815f89f`) |
 | Fail-safe operation (3.5) | PRESENT | Degrade→ESCALATED, budget→stop, verify-fail→REOPEN→ESCALATED |
 
 ## §4 Autonomy model
@@ -49,7 +49,7 @@
 | A4 Threat Analysis | PRESENT | matrix-backed ATT&CK (697 techniques, STIX ingestion); structured attack_techniques output; validation gate (`b7d8120`) |
 | A5 Response Planner | PRESENT | fetches policy itself via registry |
 | Response Agent (D1) | DEFERRED (ADR-013) | simulated executor until real backend phase |
-| Verification Agent (D2) | PARTIAL | service exists; 3 of 4 verify methods unreachable (no producing action) (#11) |
+| Verification Agent (D2) | PRESENT | all 5 verify methods reachable via `execute_and_verify()` (`815f89f`) |
 
 ## §8 Tool architecture
 
@@ -59,7 +59,7 @@
 | get_file_activity | PRESENT | Sysmon 11; ES + in-memory (`81a600f`) |
 | get_authentication_events / get_host_details | PRESENT | Security-channel logons + per-host aggregation (`81a600f`) |
 | lookup_ip / domain / hash | PRESENT | rich TI shape |
-| get_threat_intelligence | ABSENT | aggregate intel tool |
+| get_threat_intelligence | PRESENT | aggregate TI tool (`815f89f`) |
 | isolate_host | PRESENT | idempotent, simulated backend |
 | terminate_process / block_indicator / disable_account / remove_persistence | PRESENT | all 4 tools built + verified + ActionSpec'd (`81a600f`, `57e221f`) |
 | verify_host_isolated / process_terminated / indicator_blocked / persistence_removed | PRESENT | all reachable — executor produces state, verifier reads it (`81a600f`, #11 closed) |
@@ -85,7 +85,7 @@
 |---|---|---|
 | PII detection | PRESENT (minimal) | email/SSN regex (`318f3e1`) |
 | Secret/credential detection | PRESENT (minimal) | credential kv / AWS keys / JWT / private-key headers (`318f3e1`) |
-| Data classification engine | PARTIAL | normal/pii/secret levels on Evidence at collection; richer taxonomy pending |
+| Data classification engine | PRESENT | 6-level taxonomy: normal/internal/pii/confidential/secret/restricted (`815f89f`) |
 | Redaction | PRESENT (minimal) | [REDACTED:kind] masking before AI-visible views (`318f3e1`) |
 | Tokenization | PRESENT | reversible per-incident vault; analyst reveal (`6735668`) |
 | Field-level access control | PRESENT (minimal) | per-tool allowlist + RoleView AI/analyst split + task-based minimization profiles (`6735668`) |
@@ -154,7 +154,7 @@
 | Requirement | Status | Notes |
 |---|---|---|
 | Operator approve/deny | PRESENT | API endpoint + state machine gate |
-| Policy override fn | PARTIAL | engine fn exists; require-approval-all + control endpoints shipped (`81a600f`); per-decision force-override endpoint pending |
+| Policy override fn | PRESENT | engine fn + require-approval-all + `POST /incidents/{id}/override` (`57e221f`) |
 | Pause autonomy | PRESENT | ControlState.pause + pipeline halt (`81a600f`) |
 | Disable individual agents | PRESENT | disabled_agents -> fail-safe stop at stage (`81a600f`) |
 | Revoke tool permissions at runtime | PRESENT | revoked_tools checked in registry.call (`81a600f`) |
@@ -169,7 +169,7 @@
 | Transitions + timeline records | PRESENT | incidents-steps index |
 | Policy version capture | PRESENT | on every decision |
 | audit-* index + AuditEvent entity | PRESENT | `audit.py` AuditRecorder + aegis-dev-audit sink (`bb18bd2`, #4 closed) |
-| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PARTIAL | pipeline stages/tool calls/policy/injection/validation captured; data-requested/released/withheld + retries captured (2ace218); remaining: §10) |
+| Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PRESENT | all fields captured in pipeline_stage + tool_call audit events (`2ace218`, `815f89f`) |
 | AgentRun / ToolCall persisted records | PRESENT | record:agentrun + record:toolcall via add_record (`bb18bd2`, #5 closed) |
 | Tamper protection (hash chain) | ABSENT | post-#4 layer |
 
@@ -257,6 +257,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | WP-H eval expansion | corpus v2 multi-stage/incomplete; baseline comparator; audit assertion | 20, 26 | **DONE 5dbece7** |
 | ATT&CK mapping | STIX matrix ingestion (697 techniques); structured A4 output; validation gate; MAPPED_TO edges; mapping precision/recall metrics | 14, 21, 20 | **DONE b7d8120** |
 | Tier 1 quick wins | persist Approval/ResponseAction records; contradicts edges; time/env permission dims; override endpoint; audit test; read-tool ActionSpecs | 19, 14, 11, 17, 26, 16, 8 | **DONE 57e221f** |
+| Tier 2 feature completions | provenance flag; full D2 verify reachability; aggregate TI tool; richer classification; override endpoint; capture list | 3.4, 7, 8, 10, 17, 18 | **DONE 815f89f** |
 
 Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
 
