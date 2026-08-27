@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Response — Incident {{ incident_id[:12] }} — Aegis{% endblock %}
+{% block content %}
+<h2>Response — <span class="mono">{{ incident_id[:16] }}</span></h2>
+
+<div class="tabs">
+  <a href="/incidents/{{ incident_id }}/console" class="tab">Detail</a>
+  <a href="/incidents/{{ incident_id }}/privacy" class="tab">Privacy</a>
+  <a href="/incidents/{{ incident_id }}/response" class="tab active">Response</a>
+</div>
+
+<div class="card">
+  <h3>Incident Status</h3>
+  <dl class="kv">
+    <dt>Current state</dt><dd><span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></dd>
+    <dt>Severity</dt><dd><span class="badge badge-{{ incident.severity }}">{{ incident.severity }}</span></dd>
+    <dt>Host</dt><dd class="mono">{{ incident.fields.get('host', '-') }}</dd>
+  </dl>
+</div>
+
+{% if records.get('policy') %}
+<div class="card">
+  <h3>Policy Decision</h3>
+  {% for p in records.policy %}
+  <dl class="kv">
+    <dt>Action</dt><dd class="mono">{{ p.get('action', '?') }}</dd>
+    <dt>Decision</dt><dd><span class="badge badge-{{ p.get('decision', '').lower() }}">{{ p.get('decision', '?') }}</span></dd>
+    <dt>Reason</dt><dd>{{ p.get('reason', '-') }}</dd>
+    <dt>Policy version</dt><dd class="mono">{{ p.get('policy_version', '?') }}</dd>
+  </dl>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if records.get('attack_mapping') %}
+<div class="card">
+  <h3>Threat Analysis (ATT&CK)</h3>
+  {% for mapping in records.attack_mapping %}
+  <p class="muted">Data version: <span class="mono">{{ mapping.get('data_version', '?') }}</span></p>
+  <table>
+    <thead><tr><th>Technique</th><th>Name</th><th>Confidence</th><th>Evidence IDs</th></tr></thead>
+    <tbody>
+      {% for t in mapping.get('techniques', []) %}
+      <tr>
+        <td class="mono">{{ t.id }}</td>
+        <td>{{ t.get('name', '-') }}</td>
+        <td>{{ "%.0f"|format(t.get('confidence', 0) * 100) }}%</td>
+        <td class="mono">{{ t.get('evidence_ids', [])|join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Agent Recommendations</h3>
+  {% if records.get('agentrun') %}
+  <table>
+    <thead><tr><th>Agent</th><th>OK</th><th>Degraded</th><th>Error</th><th>LLM attempts</th></tr></thead>
+    <tbody>
+      {% for r in records.agentrun %}
+      <tr>
+        <td class="mono">{{ r.get('agent', '?') }}</td>
+        <td>{{ r.get('ok', '?') }}</td>
+        <td>{{ r.get('degraded', False) }}</td>
+        <td>{{ r.get('error', '-') }}</td>
+        <td>{{ r.get('llm_attempts', 1) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No agent runs recorded.</p>
+  {% endif %}
+</div>
+
+{% if records.get('verification') %}
+<div class="card">
+  <h3>Verification</h3>
+  <table>
+    <thead><tr><th>Action</th><th>Target</th><th>Expected</th><th>Actual</th><th>Passed</th></tr></thead>
+    <tbody>
+      {% for v in records.verification %}
+      <tr>
+        <td class="mono">{{ v.get('action', '?') }}</td>
+        <td class="mono">{{ v.get('target', '?') }}</td>
+        <td class="mono">{{ v.get('expected', '?') }}</td>
+        <td class="mono">{{ v.get('actual', '?') }}</td>
+        <td>{% if v.get('passed') %}<span class="badge badge-resolved">PASS</span>{% else %}<span class="badge badge-failed">FAIL</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Approval Status</h3>
+  {% if incident.state == 'awaiting_approval' %}
+  <p>Awaiting operator approval.</p>
+  <a href="/docs" class="btn" target="_blank">Approve via API →</a>
+  {% elif incident.state == 'resolved' %}
+  <p><span class="badge badge-resolved">RESOLVED</span> Incident remediated and verified.</p>
+  {% elif incident.state == 'authorized' %}
+  <p><span class="badge badge-authorized">AUTHORIZED</span> Auto-allowed by policy. Execution pending.</p>
+  {% elif incident.state == 'failed' %}
+  <p><span class="badge badge-failed">FAILED</span> Pipeline degraded. Human intervention required.</p>
+  {% elif incident.state == 'escalated' %}
+  <p><span class="badge badge-escalated">ESCALATED</span> Requires operator attention.</p>
+  {% else %}
+  <p class="muted">Current state: <span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></p>
+  {% endif %}
+</div>
+
+{% endblock %}

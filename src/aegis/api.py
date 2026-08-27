@@ -258,6 +258,30 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                                        "transitions": transitions, "records": records,
                                        "incident_id": incident_id})
 
+    @app.get("/incidents/{incident_id}/privacy",
+             response_class=HTMLResponse)
+    def console_privacy(request: Request, incident_id: str):
+        _get(incident_id)  # 404 if missing
+        evidence = [e.model_dump() for e in st.evidence(incident_id)]
+        records = {"agentrun": st.records(incident_id, "agentrun")}
+        return templates.TemplateResponse(
+            request, "privacy.html", {"incident_id": incident_id,
+                                      "evidence": evidence, "records": records})
+
+    @app.get("/incidents/{incident_id}/response",
+             response_class=HTMLResponse)
+    def console_response(request: Request, incident_id: str):
+        inc = _get(incident_id)
+        inc_d = inc.model_dump()
+        inc_d["created_at"] = str(inc_d["created_at"])[:19]
+        inc_d["updated_at"] = str(inc_d["updated_at"])[:19]
+        records = {kind: st.records(incident_id, kind)
+                   for kind in ("agentrun", "policy", "verification",
+                                "attack_mapping")}
+        return templates.TemplateResponse(
+            request, "response.html", {"incident_id": incident_id,
+                                       "incident": inc_d, "records": records})
+
     @app.get("/console/audit", response_class=HTMLResponse)
     def console_audit(request: Request):
         """Audit replay: reads from the in-memory AuditRecorder's events list

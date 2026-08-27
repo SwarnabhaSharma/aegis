@@ -14,6 +14,7 @@
         <a href="/console/audit" class="{% if request.url.path == '/console/audit' %}active{% endif %}">Audit</a>
         <a href="/docs" target="_blank">API</a>
       </nav>
+      {% block sidebar_incident %}{% endblock %}
     </aside>
     <main class="main">
       {% block content %}{% endblock %}

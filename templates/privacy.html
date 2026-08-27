@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Privacy — Incident {{ incident_id[:12] }} — Aegis{% endblock %}
+{% block content %}
+<h2>Privacy View — <span class="mono">{{ incident_id[:16] }}</span></h2>
+
+<div class="tabs">
+  <a href="/incidents/{{ incident_id }}/console" class="tab">Detail</a>
+  <a href="/incidents/{{ incident_id }}/privacy" class="tab active">Privacy</a>
+  <a href="/incidents/{{ incident_id }}/response" class="tab">Response</a>
+</div>
+
+<div class="card">
+  <h3>Data Handling per Agent Run</h3>
+  {% if records.get('agentrun') %}
+  <table>
+    <thead>
+      <tr><th>Agent</th><th>Data Requested</th><th>Data Released</th><th>Data Withheld</th></tr>
+    </thead>
+    <tbody>
+      {% for r in records.agentrun %}
+      <tr>
+        <td class="mono">{{ r.get('agent', '?') }}</td>
+        <td>{{ r.get('data_requested', '—') }}</td>
+        <td class="mono">{{ r.get('data_released', [])|join(', ') or '—' }}</td>
+        <td class="mono">{{ r.get('data_withheld', [])|join(', ') or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No agent runs recorded.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Evidence Classifications</h3>
+  {% if evidence %}
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Source</th><th>Method</th><th>Classification</th><th>Confidence</th></tr>
+    </thead>
+    <tbody>
+      {% for ev in evidence %}
+      <tr>
+        <td class="mono">{{ ev.id }}</td>
+        <td class="mono">{{ ev.get('source', '-') }}</td>
+        <td>{{ ev.get('collection_method', '-') }}</td>
+        <td><span class="badge badge-{{ ev.get('classification', 'normal') }}">{{ ev.get('classification', 'normal') }}</span></td>
+        <td>{{ "%.0f"|format(ev.get('confidence', 0) * 100) }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No evidence collected.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Privacy Audit Trail</h3>
+  {% if records.get('agentrun') %}
+  <p class="muted">All data access is logged. Agents see only AI-visible views per task minimization profiles.
+  Redacted fields are masked before reaching the LLM.</p>
+  <dl class="kv">
+    <dt>Total agent runs</dt><dd>{{ records.agentrun|length }}</dd>
+    <dt>Evidence items</dt><dd>{{ evidence|length }}</dd>
+    <dt>Withheld fields</dt>
+    <dd>{% for r in records.agentrun %}{% if r.get('data_withheld') %}{{ r.data_withheld|length }}{% endif %}{% endfor %}</dd>
+  </dl>
+  {% else %}
+  <p class="empty">No data handling recorded.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

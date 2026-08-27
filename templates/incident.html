@@ -3,6 +3,12 @@
 {% block content %}
 <h2>Incident <span class="mono">{{ incident.id[:16] }}</span></h2>
 
+<div class="tabs">
+  <a href="/incidents/{{ incident_id }}/console" class="tab active">Detail</a>
+  <a href="/incidents/{{ incident_id }}/privacy" class="tab">Privacy</a>
+  <a href="/incidents/{{ incident_id }}/response" class="tab">Response</a>
+</div>
+
 <div class="card">
   <dl class="kv">
     <dt>State</dt><dd><span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></dd>
