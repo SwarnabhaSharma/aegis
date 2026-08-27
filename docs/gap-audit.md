@@ -223,7 +223,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | View | Status |
 |---|---|
 | Incident queue + incident detail + audit replay | PRESENT | server-rendered Jinja2 + dark CSS (`081ac79`) |
-| Privacy view / agent activity / response | ABSENT | data available via records endpoint; templates pending |
+| Privacy view + response view with tab navigation | PRESENT | data requested/released/withheld, policy decisions, verification (`798eb6a`) |
 
 ## §29 Portfolio standard
 
