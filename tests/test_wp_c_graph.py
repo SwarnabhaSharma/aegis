@@ -140,7 +140,6 @@ def test_validator_treats_expired_evidence_as_absent():
 
 def test_graph_justification_documented():
     import re
-
     from pathlib import Path
 
     adr = Path(__file__).resolve().parent.parent / "docs" / "adr.md"
