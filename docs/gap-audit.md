@@ -222,7 +222,8 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 
 | View | Status |
 |---|---|
-| All six views (queue/detail/privacy/agent activity/response/audit) | ABSENT — API is the foundation; Phase 10 |
+| Incident queue + incident detail + audit replay | PRESENT | server-rendered Jinja2 + dark CSS (`081ac79`) |
+| Privacy view / agent activity / response | ABSENT | data available via records endpoint; templates pending |
 
 ## §29 Portfolio standard
 
