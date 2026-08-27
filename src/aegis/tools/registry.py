@@ -356,6 +356,9 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT, AGENT_INVESTIGATION},
+        spec={"expected_result": "TI reputation data",
+              "verification_method": "n/a (read-only)", "rollback": "n/a",
+              "failure_behavior": "error observation, non-fatal"},
         func=lambda ip: ti_chain.lookup(ip) if ti_chain else ti.lookup(ip),
     ))
     reg.register(Tool(
@@ -364,6 +367,9 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT},
+        spec={"expected_result": "TI reputation data",
+              "verification_method": "n/a (read-only)", "rollback": "n/a",
+              "failure_behavior": "error observation, non-fatal"},
         func=lambda value: ti_chain.lookup(value) if ti_chain else ti.lookup(value),
     ))
     reg.register(Tool(
@@ -372,6 +378,9 @@ def build_read_tools(telemetry: TelemetrySource, controls=None,
         risk_class=READ,
         reversible=True,
         allowed_agents={AGENT_THREAT},
+        spec={"expected_result": "TI reputation data",
+              "verification_method": "n/a (read-only)", "rollback": "n/a",
+              "failure_behavior": "error observation, non-fatal"},
         func=lambda value: ti_chain.lookup(value) if ti_chain else ti.lookup(value),
     ))
     reg.register(Tool(

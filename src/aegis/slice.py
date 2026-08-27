@@ -124,6 +124,34 @@ def _fmt_events(events, n=8) -> str:
     return "\n".join(rows) or "(no events)"
 
 
+def _detect_contradictions(evidence_records: list) -> None:
+    """§14: populate contradicts field when two records conflict on same entity."""
+    by_entity: dict[tuple, list] = {}
+    for ev in evidence_records:
+        data = ev.data
+        host = data.get("host", "")
+        entity_key = None
+        if data.get("process"):
+            entity_key = ("process", host, data["process"])
+        elif data.get("file_path"):
+            entity_key = ("file", host, data["file_path"])
+        if entity_key:
+            by_entity.setdefault(entity_key, []).append(ev)
+
+    for _entity_key, evs in by_entity.items():
+        if len(evs) < 2:
+            continue
+        actions = {}
+        for ev in evs:
+            action = ev.data.get("action", "")
+            actions.setdefault(action, []).append(ev)
+        if len(actions) > 1:
+            all_evs = [ev for group in actions.values() for ev in group]
+            ids = [ev.id for ev in all_evs]
+            for ev in all_evs:
+                ev.contradicts = [i for i in ids if i != ev.id]
+
+
 def investigate(store, inc_id: str, llm, registry=None, seed=None,
                 confidence_floor: float = 0.95,
                 audit=None, controls=None,
@@ -182,6 +210,8 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
 
     evidence_records = evidence_from_tool_result(inc_id, "read_tools",
                                                  evidence_events)
+    # §14 contradiction detection: find evidence that conflicts on same entity
+    _detect_contradictions(evidence_records)
     for ev in evidence_records:
         store.add_evidence(ev)
 
@@ -393,6 +423,12 @@ def execute_and_verify(store, inc_id: str, host: str,
 
     orch.transition(inc_id, IncidentState.EXECUTING, "orchestrator", "execute")
     reg.call("isolate_host", "D1", host=host, incident_id=inc_id)
+    from datetime import UTC, datetime
+
+    store.add_record("response_action", inc_id, {
+        "action": "isolate_host", "target": host, "actor": "D1",
+        "timestamp": datetime.now(UTC).isoformat(),
+    })
     orch.transition(inc_id, IncidentState.VERIFYING, "orchestrator", "verify")
 
     verifications = []

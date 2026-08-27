@@ -1,13 +1,13 @@
 """Conditional permissions (WP-B, spec §11).
 
 PermissionContext = situational facts at call time (incident state,
-confidence, asset criticality). Tools declare optional `requires`
-predicates; the registry enforces them per call. Dimensions implemented:
-incident-state, confidence, asset-criticality. Time/environment deferred
-(single-operator dev scale; documented in gap-audit).
+confidence, asset criticality, time, environment). Tools declare optional
+`requires` predicates; the registry enforces them per call. Dimensions:
+incident-state, confidence, asset-criticality, time-of-day, environment.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from aegis.incidents.schema import IncidentState
 
@@ -21,6 +21,8 @@ class PermissionContext:
     incident_state: str = ""
     confidence: float = 0.0
     asset_criticality: str = "unknown"
+    time_of_day: str = field(default_factory=lambda: datetime.now(UTC).strftime("%H:%M"))
+    environment: str = "production"
 
     def satisfies(self, requires: dict) -> tuple[bool, str]:
         if "min_state" in requires:
@@ -35,6 +37,14 @@ class PermissionContext:
         if "forbidden_criticality" in requires:
             if self.asset_criticality == requires["forbidden_criticality"]:
                 return False, f"asset is {self.asset_criticality}"
+        if "allowed_hours" in requires:
+            start, end = requires["allowed_hours"]
+            hour = int(self.time_of_day.split(":")[0])
+            if not (start <= hour < end):
+                return False, f"hour {hour} outside allowed window {start}-{end}"
+        if "forbidden_environments" in requires:
+            if self.environment in requires["forbidden_environments"]:
+                return False, f"environment is {self.environment}"
         return True, ""
 
 

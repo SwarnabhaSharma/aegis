@@ -162,8 +162,36 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             raise HTTPException(
                 status_code=409, detail=f"cannot approve from state {current.value}")
         updated = orch.transition(incident_id, IncidentState.AUTHORIZED,
-                                  "operator", "approved via api")
+                                   "operator", "approved via api")
+        from datetime import UTC, datetime
+
+        st.add_record("approval", incident_id, {
+            "actor": "operator", "decision": "approve",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "from_state": current.value,
+        })
         return updated.model_dump()
+
+    @app.post("/incidents/{incident_id}/override")
+    def emergency_override(incident_id: str, decision: str = "ALLOW"):
+        """§17 emergency override: operator forces a policy decision."""
+        from aegis.policies.engine import Decision, evaluate
+
+        _get(inc_id := incident_id)
+        if decision not in ("ALLOW", "DENY"):
+            raise HTTPException(status_code=400, detail="decision must be ALLOW or DENY")
+        d = Decision[decision]
+        evaluate("override", {}, override=d, store=st, incident_id=inc_id)
+        from datetime import UTC, datetime
+
+        st.add_record("policy", inc_id, {
+            "action": "override", "decision": decision,
+            "actor": "operator", "reason": "emergency override",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "overridden": True,
+        })
+        return {"incident_id": inc_id, "decision": decision,
+                "reason": "operator emergency override"}
 
     @app.get("/controls")
     def get_controls():
