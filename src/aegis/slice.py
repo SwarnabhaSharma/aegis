@@ -313,6 +313,14 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         if audit is not None:
             audit.record("tool_call", inc_id, actor=c["agent"],
                          tool=c["tool"], ok=c["ok"], error=c["error"])
+            # §10 privacy audit: log what was withheld from each agent
+            from aegis.privacy.gateway import get_gateway
+            gw = get_gateway()
+            report = gw.withheld_report(c["agent"], c["tool"],
+                                        c.get("_raw_result"))
+            if report["withheld_keys"] or report.get("task_filtered"):
+                audit.record("privacy_withheld", inc_id, actor=c["agent"],
+                             tool=c["tool"], **report)
         store.add_record("toolcall", inc_id, c)
     if audit is not None and attack_report:
         audit.record("attack_mapping_validation", inc_id, actor="validator",

@@ -1,12 +1,9 @@
-"""Minimal privacy layer (debt #10/T3, spec §10). Detection -> classification
--> redaction before AI-visible views; decisions logged via audit.
-
-V1 scope (ponytail): regex detectors + uniform text redaction for agent views
-+ dict-field allowlist. Full gateway (tokenization, role-based views, four
-representations) stays deferred per ADR-003 sequencing.
+"""Privacy layer (spec §10). Detection -> classification -> redaction before
+AI-visible views; gateway for role-scoped views; decisions logged via audit.
 """
 
 import re
+import secrets as _secrets
 
 # ponytail: curated patterns, extend when eval corpus shows misses
 _PATTERNS: dict[str, str] = {
@@ -57,10 +54,26 @@ def classification_level(kinds: list[str]) -> str:
 
 
 # §10 AI-visible view: dict outputs filtered to allowlisted keys per tool.
-# Analyst-facing reads keep full dicts; only the LLM observation path filters.
 AI_VISIBLE_FIELDS: dict[str, set[str]] = {
     "get_host_details": {"host", "seen", "event_count", "first_seen",
-                         "last_seen", "channels"},  # users withheld from AI
+                         "last_seen", "channels"},
+    "search_events": {"event_id", "host", "action", "process_name",
+                      "process_pid", "command_line", "destination_ip",
+                      "destination_port", "file_path", "user"},
+    "get_process_tree": {"event_id", "host", "action", "process_name",
+                         "process_pid", "process_parent", "command_line"},
+    "get_network_connections": {"event_id", "host", "action", "process_name",
+                                "process_pid", "destination_ip",
+                                "destination_port"},
+    "get_file_activity": {"event_id", "host", "action", "process_name",
+                          "file_path"},
+    "get_authentication_events": {"event_id", "host", "action", "user"},
+    "lookup_ip": {"ip", "reputation", "score", "country", "reports"},
+    "lookup_hash": {"hash", "reputation", "detections", "first_seen"},
+    "lookup_domain": {"domain", "reputation", "category", "reports"},
+    "lookup_cve": {"cve", "cvss", "severity", "description", "affected"},
+    "get_threat_intelligence": {"indicators", "results"},
+    "get_policy": {"name", "incident_type", "actions", "conditions"},
 }
 
 
@@ -81,8 +94,6 @@ def withheld_keys(tool: str, obs) -> list[str]:
 
 # -- §10 task-based minimization + RoleViews (WP-F) --
 
-# per-agent task profiles: which telemetry event_ids each agent needs.
-# Everything else is withheld from that agent's view (minimization).
 TASK_PROFILES: dict[str, set[str] | None] = {
     "A1": set(),            # alert metadata only; no raw telemetry
     "A2": None,             # investigation: full telemetry
@@ -97,12 +108,12 @@ def task_view(agent_id: str, events: list) -> list:
     profile = TASK_PROFILES.get(agent_id)
     if profile is None:
         return list(events)
-    return [e for e in events if getattr(e, "event_id", "") in profile]
+    return [e for e in events
+            if not hasattr(e, "event_id") or getattr(e, "event_id", "") in profile]
 
 
 class RoleView:
-    """§10 role-scoped views over an observation. AI view = allowlist +
-    redaction; analyst view = full fidelity."""
+    """§10 role-scoped views over an observation."""
 
     def __init__(self, tool: str, obs):
         self.tool = tool
@@ -110,7 +121,6 @@ class RoleView:
 
     def ai(self) -> str:
         from aegis.agents.reasoning import _fmt_observation
-
         return _fmt_observation(self.ai_visible(), tool=self.tool)
 
     def ai_visible(self):
@@ -125,20 +135,11 @@ class RoleView:
 
 # -- reversible tokenization vault (WP-F, §10) --
 
-import secrets as _secrets  # noqa: E402
-
-
 class TokenVault:
-    """Per-incident reversible tokenization.
-
-    tokenize(): replaces each detected sensitive span with a unique
-    [TOK:<n>:<rand>] token and stores the ORIGINAL span. reveal(): analyst-only
-    restoration. Vault stays local to the incident — never serialized into
-    prompts, never persisted to ES.
-    """
+    """Per-incident reversible tokenization."""
 
     def __init__(self) -> None:
-        self._map: dict[str, str] = {}   # token -> original span
+        self._map: dict[str, str] = {}
         self._counter = 0
 
     def _next_token(self) -> str:

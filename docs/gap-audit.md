@@ -15,7 +15,7 @@
 
 | Requirement | Status | Where / Notes |
 |---|---|---|
-| Minimum necessary data & authority | PARTIAL | Authority minimal (`state_machine.py`, registry); agents see full context dict — no field minimization (blocked on privacy §10) |
+| Minimum necessary data & authority | PRESENT | Authority minimal; field minimization via AI_VISIBLE_FIELDS per tool + task_view per agent (`privacy/__init__.py`, `gateway.py`) |
 | AI authority boundary (3.2) | PRESENT | Agents propose-only; state machine rejects agent actor |
 | AI vs deterministic split (3.3) | PRESENT | LLM confined to `agents/reasoning.py`; D1/D2 deterministic |
 | Evidence integrity (3.4) | PRESENT | Degrade-not-fabricate ✅; evidence_ids validated + fabricated stripped/flagged (`bb18bd2`, #6 closed); provenance flag on Evidence (`815f89f`) |
@@ -89,9 +89,9 @@
 | Redaction | PRESENT (minimal) | [REDACTED:kind] masking before AI-visible views (`318f3e1`) |
 | Tokenization | PRESENT | reversible per-incident vault; analyst reveal (`6735668`) |
 | Field-level access control | PRESENT (minimal) | per-tool allowlist + RoleView AI/analyst split + task-based minimization profiles (`6735668`) |
-| Contextual minimization | PARTIAL | task-based event profiles per agent (6735668); prompt-level minimization pending |
-| Four representations (raw/filtered/AI-visible/analyst-visible) | PARTIAL | raw/AI-visible/analyst distinct (`318f3e1`,`6735668`); filtered store snapshot pending |
-| Auditable privacy decisions ("why received / why withheld") | PRESENT (minimal) | privacy_redaction audit events with where/kinds/reason (`318f3e1`) |
+| Contextual minimization | PRESENT | task-based event profiles per agent + prompt-level redaction via gateway (`privacy/__init__.py`, `gateway.py`) |
+| Four representations (raw/filtered/AI-visible/analyst-visible) | PRESENT | raw/AI-visible via AI_VISIBLE_FIELDS/analyst via TokenVault/gateway (`gateway.py`, analyst-view endpoint) |
+| Auditable privacy decisions ("why received / why withheld") | PRESENT | privacy_redaction + privacy_withheld audit events with withheld_keys/task_filtered (`gateway.py`) |
 | Dimension analysis (field/role/agent/task/incident/asset/context) | ABSENT | documented design question, Phase 8 |
 
 ## §11 Agent data/action permissions
@@ -132,7 +132,7 @@
 | Indirect prompt injection | PARTIAL | same mechanism covers TI/tool-result paths; corpus measurement pending (T4) |
 | Tool abuse | PRESENT | registry authorization |
 | Privilege escalation | PRESENT | static permission sets |
-| Data exfiltration | PARTIAL | tool scope bounds reads; no minimization layer |
+| Data exfiltration | PRESENT | tool scope bounds reads + field-level minimization via AI_VISIBLE_FIELDS + task_view (`privacy/__init__.py`) |
 | Malicious threat intelligence | PARTIAL | provider framework + guards shipped (f616075); responses enter prompts via untrusted wrapping; live-feed corpus scenarios pending |
 | Agent loops | PRESENT | no agent→agent calls; budgets |
 | Excessive tool calls | PRESENT | real budget accounting |
@@ -258,8 +258,9 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | ATT&CK mapping | STIX matrix ingestion (697 techniques); structured A4 output; validation gate; MAPPED_TO edges; mapping precision/recall metrics | 14, 21, 20 | **DONE b7d8120** |
 | Tier 1 quick wins | persist Approval/ResponseAction records; contradicts edges; time/env permission dims; override endpoint; audit test; read-tool ActionSpecs | 19, 14, 11, 17, 26, 16, 8 | **DONE 57e221f** |
 | Tier 2 feature completions | provenance flag; full D2 verify reachability; aggregate TI tool; richer classification; override endpoint; capture list | 3.4, 7, 8, 10, 17, 18 | **DONE 815f89f** |
+| Privacy gateway | task_view wired; AI_VISIBLE_FIELDS expanded; gateway.py created; TokenVault integrated; withheld_keys audit; analyst-view + reveal endpoints | 3, 10, 15 | **DONE gateway.py** |
 
-Deferred-by-decision (not backlog): privacy full gateway sequencing (ADR-003), executor realism (ADR-013), RAG (ADR-007).
+Deferred-by-decision (not backlog): executor realism (ADR-013), RAG (ADR-007).
 
 ---
 

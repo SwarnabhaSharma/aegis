@@ -326,6 +326,37 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         return templates.TemplateResponse(
             request, "audit.html", {"events": events})
 
+    @app.get("/incidents/{incident_id}/analyst-view")
+    def analyst_view(incident_id: str):
+        """§10 analyst view: evidence with tokenized PII (reversible)."""
+        _get(incident_id)
+        from aegis.privacy.gateway import get_gateway
+        gw = get_gateway()
+        evidence = []
+        for ev in st.evidence(incident_id):
+            ev_d = ev.model_dump()
+            # tokenize sensitive fields for analyst display
+            for key in ("command_line", "file_path", "user"):
+                val = ev_d.get("data", {}).get(key)
+                if val:
+                    ev_d["data"][key] = gw.analyst_view(str(val))
+            evidence.append(ev_d)
+        return {"incident_id": incident_id, "evidence": evidence,
+                "vault_tokens": gw.vault.tokens()}
+
+    @app.post("/incidents/{incident_id}/reveal")
+    def reveal_tokens(incident_id: str, tokens: list[str]):
+        """§10 reveal: de-tokenize specific tokens back to originals."""
+        _get(incident_id)
+        from aegis.privacy.gateway import get_gateway
+        gw = get_gateway()
+        originals = {}
+        for tok in tokens:
+            revealed = gw.vault.reveal(tok)
+            if revealed != tok:
+                originals[tok] = revealed
+        return {"revealed": originals}
+
     return app
 
 

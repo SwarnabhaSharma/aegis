@@ -192,7 +192,11 @@ class ReasoningAgent:
                 observations.append(f"{name}: ERROR ({e})")
                 continue
             used += 1
-            observations.append(f"{name}({args}):\n{_fmt_observation(obs, tool=name)}")
+            # §10 privacy gateway: task-view filter + field allowlist + redact
+            from aegis.privacy.gateway import get_gateway
+            gw = get_gateway()
+            rv = gw.filter(self.agent_id, name, obs)
+            observations.append(f"{name}({args}):\n{rv.ai()}")
         return AgentResult(
             self.agent_id, ok=False, data={}, degraded=True,
             error="tool-step budget exceeded before final answer", tool_calls=used,

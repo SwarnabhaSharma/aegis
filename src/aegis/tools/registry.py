@@ -130,6 +130,7 @@ class ToolRegistry:
                 raise TypeError(f"{name}: expected dict output")
 
             entry["ok"] = True
+            entry["_raw_result"] = result
             return result
         except Exception as e:
             entry["error"] = str(e)
