@@ -48,7 +48,32 @@
 </div>
 {% endif %}
 
-{% if records.get('policy') %}
+{% if incident.state == 'AWAITING_APPROVAL' %}
+<div class="card">
+  <h3>Operator Action Required</h3>
+  <p>This incident is awaiting approval before response actions can be executed.</p>
+  <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+    <form method="POST" action="/incidents/{{ incident_id }}/console/approve" style="display:inline;">
+      <button type="submit" class="btn btn-primary" style="background:#2ecc71;border-color:#27ae60;">Approve</button>
+    </form>
+    <form method="POST" action="/incidents/{{ incident_id }}/console/deny" style="display:inline;">
+      <button type="submit" class="btn btn-danger" style="background:#e74c3c;border-color:#c0392b;">Deny</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if incident.state in ['INVESTIGATING', 'TRIAGING', 'CORRELATING', 'ASSESSING', 'RESPONSE_PLANNED', 'EXECUTING', 'VERIFYING'] %}
+<div class="card">
+  <h3>Operator Controls</h3>
+  <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+    <form method="POST" action="/controls/console/cancel/{{ incident_id }}" style="display:inline;">
+      <button type="submit" class="btn btn-danger" style="background:#e67e22;border-color:#d35400;">Cancel Run</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <h3>Policy Decision</h3>
   {% for p in records.policy %}

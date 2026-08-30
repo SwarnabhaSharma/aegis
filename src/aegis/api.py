@@ -5,6 +5,7 @@ functions. Store selection mirrors the runner (AEGIS_STORE=es).
 """
 
 import os
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -47,9 +48,13 @@ def _make_store():
 
 
 def create_app(store=None, llm=None, controls=None) -> FastAPI:
+    from starlette.middleware.base import BaseHTTPMiddleware
+
     from aegis.controls import ControlState
 
-    app = FastAPI(title="Aegis", version="0.1.0")
+    app = FastAPI(title="Aegis", version="0.1.0",
+                  description="Autonomous SOC Platform — AI agents with deterministic guardrails",
+                  docs_url="/docs", redoc_url=None)
     _STATIC = Path(__file__).resolve().parents[2] / "static"
     app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
     st = store or _make_store()
@@ -60,18 +65,46 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     ctl = controls if controls is not None else ControlState.from_env()
     app.state.controls = ctl
 
+    # §17 request tracing: correlation ID on every request
+    @app.middleware("http")
+    async def correlation_middleware(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:12])
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+    # §17 API key auth: skip for console UI (HTML) and health endpoints
+    if settings.aegis_api_key:
+        class AuthMiddleware(BaseHTTPMiddleware):
+            SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json"}
+
+            async def dispatch(self, request: Request, call_next):
+                if (request.url.path in self.SKIP_PATHS
+                        or request.url.path.startswith("/static")
+                        or request.url.path.startswith("/console")):
+                    return await call_next(request)
+                key = request.headers.get("X-API-Key", "")
+                if key != settings.aegis_api_key:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse({"detail": "invalid or missing API key"},
+                                        status_code=401)
+                return await call_next(request)
+
+        app.add_middleware(AuthMiddleware)
+
     def _get(incident_id: str):
         inc = st.get(incident_id)
         if inc is None:
             raise HTTPException(status_code=404, detail="incident not found")
         return inc
 
-    @app.post("/incidents")
+    @app.post("/incidents", tags=["incidents"])
     def create_incident(alert: AlertIn):
         inc = ingest_alert(st, alert.source, alert.fields, alert.incident_type)
         return inc.model_dump()
 
-    @app.get("/incidents")
+    @app.get("/incidents", tags=["incidents"])
     def list_incidents(state: str = "", severity: str = ""):
         """Console UI: list all incidents with optional state/severity filter."""
         out = []
@@ -87,7 +120,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return out
 
-    @app.get("/incidents/{incident_id}")
+    @app.get("/incidents/{incident_id}", tags=["incidents"])
     def get_incident(incident_id: str):
         return _get(incident_id).model_dump()
 
@@ -111,7 +144,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         _get(incident_id)
         return st.records(incident_id, kind)
 
-    @app.post("/incidents/{incident_id}/investigate")
+    @app.post("/incidents/{incident_id}/investigate", tags=["pipeline"])
     def investigate(incident_id: str):
         # Consolidated orchestration via aegis.slice (single path with CLI).
         # Agentic registry only when the store itself is ES-backed — keeps
@@ -154,7 +187,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                          "policy_version": decision.policy_version},
         }
 
-    @app.post("/incidents/{incident_id}/approve")
+    @app.post("/incidents/{incident_id}/approve", tags=["operator"])
     def approve(incident_id: str):
         _get(incident_id)
         current = st.get(incident_id).state
@@ -172,7 +205,25 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         })
         return updated.model_dump()
 
-    @app.post("/incidents/{incident_id}/override")
+    @app.post("/incidents/{incident_id}/deny")
+    def deny(incident_id: str):
+        _get(incident_id)
+        current = st.get(incident_id).state
+        if current != IncidentState.AWAITING_APPROVAL:
+            raise HTTPException(
+                status_code=409, detail=f"cannot deny from state {current.value}")
+        updated = orch.transition(incident_id, IncidentState.FAILED,
+                                   "operator", "denied via api")
+        from datetime import UTC, datetime
+
+        st.add_record("approval", incident_id, {
+            "actor": "operator", "decision": "deny",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "from_state": current.value,
+        })
+        return updated.model_dump()
+
+    @app.post("/incidents/{incident_id}/override", tags=["operator"])
     def emergency_override(incident_id: str, decision: str = "ALLOW"):
         """§17 emergency override: operator forces a policy decision."""
         from aegis.policies.engine import Decision, evaluate
@@ -372,6 +423,63 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         ev_result = verify_evidence_integrity(evidence)
         return {"incident_id": incident_id, "audit_chain": chain_ok,
                 "evidence": ev_result}
+
+    # -- console form actions (redirect back to detail) --
+
+    @app.post("/incidents/{incident_id}/console/approve")
+    def console_approve(incident_id: str):
+        from fastapi.responses import RedirectResponse
+        _get(incident_id)
+        current = st.get(incident_id).state
+        if current == IncidentState.AWAITING_APPROVAL:
+            orch.transition(incident_id, IncidentState.AUTHORIZED,
+                            "operator", "approved via console")
+        return RedirectResponse(f"/incidents/{incident_id}/console",
+                                status_code=303)
+
+    @app.post("/incidents/{incident_id}/console/deny")
+    def console_deny(incident_id: str):
+        from fastapi.responses import RedirectResponse
+        _get(incident_id)
+        current = st.get(incident_id).state
+        if current == IncidentState.AWAITING_APPROVAL:
+            orch.transition(incident_id, IncidentState.FAILED,
+                            "operator", "denied via console")
+        return RedirectResponse(f"/incidents/{incident_id}/console",
+                                status_code=303)
+
+    @app.post("/controls/console/cancel/{incident_id}")
+    def console_cancel(incident_id: str):
+        from fastapi.responses import RedirectResponse
+        ctl.cancel_incident(incident_id)
+        return RedirectResponse(f"/incidents/{incident_id}/console",
+                                status_code=303)
+
+    # -- health & readiness --
+
+    @app.get("/health")
+    def health():
+        """Liveness probe — service is running."""
+        return {"status": "ok"}
+
+    @app.get("/ready")
+    def ready():
+        """Readiness probe — service can handle requests."""
+        try:
+            st.all_incident_ids()
+            return {"status": "ready"}
+        except Exception as e:
+            return {"status": "not ready", "error": str(e)}, 503
+
+    # -- graph endpoint --
+
+    @app.get("/incidents/{incident_id}/graph")
+    def get_graph(incident_id: str):
+        """§14 evidence graph: nodes + typed edges."""
+        _get(incident_id)
+        from aegis.intel.graph import load_graph
+        nodes, edges = load_graph(st, incident_id)
+        return {"incident_id": incident_id, "nodes": nodes, "edges": edges}
 
     return app
 

@@ -8,8 +8,11 @@ from aegis.tools.telemetry import TelemetryEvent, TelemetrySource
 
 
 class ElasticsearchTelemetry(TelemetrySource):
-    def __init__(self, es: Elasticsearch, index: str = ".ds-winlogbeat-9.3.2-*") -> None:
+    def __init__(self, es: Elasticsearch, index: str = "") -> None:
         self._es = es
+        if not index:
+            from aegis.config import get_settings
+            index = get_settings().es_telemetry_index
         self._index = index
 
     def _search(self, query: dict, limit: int) -> list[TelemetryEvent]:

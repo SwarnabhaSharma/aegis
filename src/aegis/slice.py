@@ -167,7 +167,6 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     from aegis.agents.validation import validate_attack_mapping, validate_evidence
     from aegis.audit import version_manifest
     from aegis.intel import attack as attack_intel
-    from aegis.intel import attack as attack_store
     from aegis.privacy import redact as privacy_redact
     from aegis.tools.registry import TOOL_SCHEMA_VERSION
 
@@ -347,7 +346,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     if attack_mappings:
         store.add_record("attack_mapping", inc_id, {
             "techniques": attack_mappings,
-            "data_version": attack_store.ATTACK_DATA_VERSION,
+            "data_version": attack_intel.ATTACK_DATA_VERSION,
         })
         evidence_by_id = {ev.id: ev for ev in store.evidence(inc_id)}
         for t in attack_mappings:
@@ -417,7 +416,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
         policy_versions=[decision.policy_version],
         tool_schema_version=TOOL_SCHEMA_VERSION,
     )
-    manifest["attack_data_version"] = attack_store.ATTACK_DATA_VERSION
+    manifest["attack_data_version"] = attack_intel.ATTACK_DATA_VERSION
     store.add_record("manifest", inc_id, manifest)
 
     if decision.decision == Decision.DENY:

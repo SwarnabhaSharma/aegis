@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     otx_api_key: str = ""
     nvd_api_key: str = ""
 
+    aegis_api_key: str = ""  # §17: API auth; empty = disabled (local dev)
+
 
 @lru_cache
 def get_settings() -> Settings:

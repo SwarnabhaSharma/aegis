@@ -1,10 +1,16 @@
 # Aegis — Autonomous Security Incident Operations Platform
 
-Local-first SOC automation where **AI proposes, deterministic controls dispose**.
-Five LLM reasoning agents (Triage → Investigation → Correlation → Threat
-Analysis → Response Planning) investigate alerts over real Sysmon telemetry;
+SOC analysts are overwhelmed: thousands of alerts per day, most false positives,
+and the real threats hide in noise. AI can help — but uncontrolled LLM autonomy
+in security operations is dangerous. A hallucinated response could isolate a
+production server or disable a CEO's account.
+
+Aegis solves this with a simple principle: **AI proposes, deterministic controls
+dispose**. Five LLM reasoning agents investigate alerts over real Sysmon telemetry;
 a policy engine, executor, and verifier — all deterministic — decide, act,
 and confirm. The LLM can never mutate incident state or execute actions.
+
+Local-first, no cloud dependencies. Runs on a single laptop with a 9B model.
 
 Measured on the bundled eval corpus with a 9B local model:
 precision 1.0, recall 1.0, 0 unsafe actions ([report](evals/report-real-20260823-060037.md)).
