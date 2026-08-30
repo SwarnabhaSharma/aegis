@@ -381,6 +381,13 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         return templates.TemplateResponse(
             request, "audit.html", {"events": events})
 
+    @app.get("/incidents/{incident_id}/console/graph", response_class=HTMLResponse)
+    def console_graph(request: Request, incident_id: str):
+        """Evidence graph visualization page."""
+        _get(incident_id)
+        return templates.TemplateResponse(
+            request, "graph.html", {"incident_id": incident_id})
+
     @app.get("/incidents/{incident_id}/analyst-view")
     def analyst_view(incident_id: str):
         """§10 analyst view: evidence with tokenized PII (reversible)."""
