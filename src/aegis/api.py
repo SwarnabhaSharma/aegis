@@ -357,6 +357,18 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                 originals[tok] = revealed
         return {"revealed": originals}
 
+    @app.get("/incidents/{incident_id}/integrity")
+    def integrity_check(incident_id: str):
+        """§18: verify audit chain + evidence hash integrity."""
+        _get(incident_id)
+        from aegis.audit import verify_evidence_integrity
+        audit_rec = getattr(app.state, "audit_recorder", None)
+        chain_ok = audit_rec.verify_chain() if audit_rec else None
+        evidence = st.evidence(incident_id)
+        ev_result = verify_evidence_integrity(evidence)
+        return {"incident_id": incident_id, "audit_chain": chain_ok,
+                "evidence": ev_result}
+
     return app
 
 

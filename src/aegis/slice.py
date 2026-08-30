@@ -292,6 +292,14 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     validation_report = validate_evidence(store, inc_id, results)
     attack_report = validate_attack_mapping(store, inc_id, results)
 
+    # §18 evidence integrity: verify hashes after pipeline
+    from aegis.audit import verify_evidence_integrity
+    ev_integrity = verify_evidence_integrity(store.evidence(inc_id))
+    if audit is not None:
+        audit.record("evidence_integrity", inc_id, actor="integrity_checker",
+                     ok=ev_integrity["ok"], checked=ev_integrity["checked"],
+                     mismatches=ev_integrity["mismatches"])
+
     # §18 audit + step-record persistence (#4/#5)
     evidence_ids_released = [ev.id for ev in
                              store.evidence(inc_id)]

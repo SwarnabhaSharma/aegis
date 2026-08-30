@@ -128,12 +128,12 @@
 
 | Threat | Status | Notes |
 |---|---|---|
-| Prompt injection via telemetry | PARTIAL | untrusted_data wrapping + escaping + system rule + heuristic detector (`bb18bd2`); no adversarial eval corpus yet (T4 measures) |
-| Indirect prompt injection | PARTIAL | same mechanism covers TI/tool-result paths; corpus measurement pending (T4) |
+| Prompt injection via telemetry | PRESENT | untrusted_data wrapping + escaping + system rule + heuristic detector (`bb18bd2`); adversarial corpus expanded with indirect/delimiter-forgery/TI-poisoning scenarios (`test_adversarial.py`) |
+| Indirect prompt injection | PRESENT | same mechanism covers TI/tool-result paths; adversarial tests for TI injection + correlation text poisoning (`test_adversarial.py`) |
 | Tool abuse | PRESENT | registry authorization |
 | Privilege escalation | PRESENT | static permission sets |
 | Data exfiltration | PRESENT | tool scope bounds reads + field-level minimization via AI_VISIBLE_FIELDS + task_view (`privacy/__init__.py`) |
-| Malicious threat intelligence | PARTIAL | provider framework + guards shipped (f616075); responses enter prompts via untrusted wrapping; live-feed corpus scenarios pending |
+| Malicious threat intelligence | PRESENT | provider framework + guards shipped (f616075); responses enter prompts via untrusted wrapping; adversarial TI injection tests (`test_adversarial.py`) |
 | Agent loops | PRESENT | no agent→agent calls; budgets |
 | Excessive tool calls | PRESENT | real budget accounting |
 | Hallucinated evidence | PRESENT | validation strips + flags fabricated refs (`bb18bd2`, #6 closed) |
@@ -171,7 +171,7 @@
 | audit-* index + AuditEvent entity | PRESENT | `audit.py` AuditRecorder + aegis-dev-audit sink (`bb18bd2`, #4 closed) |
 | Full capture list (model/version, prompt id, data requested/released/withheld, tool requested, authz decision, retries) | PRESENT | all fields captured in pipeline_stage + tool_call audit events (`2ace218`, `815f89f`) |
 | AgentRun / ToolCall persisted records | PRESENT | record:agentrun + record:toolcall via add_record (`bb18bd2`, #5 closed) |
-| Tamper protection (hash chain) | ABSENT | post-#4 layer |
+| Tamper protection (hash chain) | PRESENT | SHA-256 chain on AuditEvents + Evidence records; `verify_chain()` + `verify_evidence_integrity()`; `GET /incidents/{id}/integrity` endpoint |
 
 ## §19 Data model entities
 
@@ -259,6 +259,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Tier 1 quick wins | persist Approval/ResponseAction records; contradicts edges; time/env permission dims; override endpoint; audit test; read-tool ActionSpecs | 19, 14, 11, 17, 26, 16, 8 | **DONE 57e221f** |
 | Tier 2 feature completions | provenance flag; full D2 verify reachability; aggregate TI tool; richer classification; override endpoint; capture list | 3.4, 7, 8, 10, 17, 18 | **DONE 815f89f** |
 | Privacy gateway | task_view wired; AI_VISIBLE_FIELDS expanded; gateway.py created; TokenVault integrated; withheld_keys audit; analyst-view + reveal endpoints | 3, 10, 15 | **DONE gateway.py** |
+| Tier 3 adversarial + tamper | adversarial corpus (test_adversarial.py); Evidence hash field; verify_evidence_integrity; integrity API endpoint; slice wiring | 15, 18 | **DONE test_adversarial.py** |
 
 Deferred-by-decision (not backlog): executor realism (ADR-013), RAG (ADR-007).
 

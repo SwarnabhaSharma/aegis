@@ -98,3 +98,14 @@ def version_manifest(model: str, prompt_version: str,
         "policy_versions": sorted(set(policy_versions)),
         "tool_schema_version": tool_schema_version,
     }
+
+
+def verify_evidence_integrity(records: list) -> dict:
+    """§18: recompute hashes; return mismatches."""
+    mismatches = []
+    for ev in records:
+        expected = ev.compute_hash()
+        if ev.hash != expected:
+            mismatches.append({"id": ev.id, "expected": expected, "actual": ev.hash})
+    return {"ok": len(mismatches) == 0, "mismatches": mismatches,
+            "checked": len(records)}

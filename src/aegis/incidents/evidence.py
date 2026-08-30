@@ -4,6 +4,8 @@ Evidence = separate records keyed by incident_id (matches incident-steps-* model
 Timeline auto-appends on evidence collect and state transition.
 """
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -23,7 +25,17 @@ class Evidence(BaseModel):
     confidence: float = 0.5  # §14: per-evidence confidence (source-derived)
     valid_until: datetime | None = None  # §14: expiration; None = indefinite
     contradicts: list[str] = Field(default_factory=list)  # §14: ids this contradicts
+    hash: str = ""  # §18: SHA-256 tamper-evidence
     data: dict[str, Any] = Field(default_factory=dict)
+
+    def compute_hash(self) -> str:
+        """§18: deterministic hash over identity + content."""
+        material = json.dumps(
+            {"id": self.id, "incident_id": self.incident_id,
+             "source": self.source, "data": self.data},
+            sort_keys=True, default=str,
+        )
+        return hashlib.sha256(material.encode()).hexdigest()
 
 
 class TimelineEntry(BaseModel):
@@ -75,5 +87,6 @@ def evidence_from_tool_result(incident_id: str, tool: str, events: list,
         )
         if meta:
             ev.data["_privacy"] = meta
+        ev.hash = ev.compute_hash()
         out.append(ev)
     return out
