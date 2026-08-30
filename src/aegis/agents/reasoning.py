@@ -138,10 +138,11 @@ class ReasoningAgent:
         self._llm = llm
 
     def run(self, incident_summary: dict, tool_results: str = "",
-            registry=None, max_steps: int = 2) -> AgentResult:
+            registry=None, max_steps: int = 2, controls=None) -> AgentResult:
         if registry is None:
             return self._single_shot(incident_summary, tool_results)
-        return self._agentic(incident_summary, registry, max_steps, tool_results)
+        return self._agentic(incident_summary, registry, max_steps,
+                             tool_results, controls)
 
     # -- legacy single-shot --
 
@@ -161,8 +162,9 @@ class ReasoningAgent:
     # -- agentic loop --
 
     def _agentic(self, incident_summary: dict, registry, max_steps: int,
-                 tool_results: str = "") -> AgentResult:
+                 tool_results: str = "", controls=None) -> AgentResult:
         tool_names = registry.authorized_tools(self.agent_id)
+        inc_id = incident_summary.get("incident_id", "")
         # analyst-provided context (correlation, ATT&CK candidates) seeds the
         # loop; correlation text embeds telemetry values -> untrusted too.
         observations: list[str] = (
@@ -171,6 +173,13 @@ class ReasoningAgent:
         )
         used = 0
         for turn in range(1, max_steps + 1):
+            # §17 mid-run cancel: check between LLM turns
+            if (controls is not None
+                    and hasattr(controls, "is_cancelled")
+                    and controls.is_cancelled(inc_id)):
+                return AgentResult(self.agent_id, ok=False, data={},
+                                   degraded=True, error="cancelled by operator",
+                                   tool_calls=used)
             result = self._llm.complete_json(
                 self._system_prompt(tool_names),
                 self._user_prompt(incident_summary, observations)

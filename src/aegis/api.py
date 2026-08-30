@@ -226,6 +226,10 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             ctl.enter_safe_mode()
         elif action == "restore_normal":
             ctl.restore_normal()
+        elif action == "cancel_incident" and target:
+            ctl.cancel_incident(target)
+        elif action == "uncancel_incident" and target:
+            ctl.uncancel_incident(target)
         else:
             raise HTTPException(status_code=400, detail=f"unknown action: {action}")
         is_es = st.__class__.__name__ == "ElasticsearchStore"

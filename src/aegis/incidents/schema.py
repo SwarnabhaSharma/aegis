@@ -23,6 +23,7 @@ class IncidentState(enum.StrEnum):
     REOPENED = "REOPENED"
     ESCALATED = "ESCALATED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class Alert(BaseModel):

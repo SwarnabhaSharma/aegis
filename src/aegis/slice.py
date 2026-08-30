@@ -364,6 +364,16 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
                     "ts": datetime.now(UTC).isoformat(),
                 })
 
+    if any(s.error == "cancelled by operator" for s in steps):
+        orch.transition(inc_id, IncidentState.CANCELLED,
+                        "operator", "cancelled mid-run")
+        if audit is not None:
+            audit.record("cancellation", inc_id, actor="operator",
+                         reason="cancelled mid-run by operator")
+        return {"ok": False, "errors": ["cancelled by operator"],
+                "related": related, "evidence_count": len(evidence_events),
+                "steps": steps}
+
     if any(not s.ok for s in steps):
         orch.transition(inc_id, IncidentState.ESCALATED,
                         "orchestrator", "pipeline degraded")

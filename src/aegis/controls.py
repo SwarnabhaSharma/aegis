@@ -16,6 +16,7 @@ class ControlState:
     revoked_tools: set[str] = field(default_factory=set)
     require_approval_all: bool = False
     safe_mode: bool = False
+    cancelled_incidents: set[str] = field(default_factory=set)  # §17 mid-run cancel
 
     @classmethod
     def from_env(cls) -> "ControlState":
@@ -40,6 +41,15 @@ class ControlState:
 
     def resume(self) -> None:
         self.paused = False
+
+    def cancel_incident(self, incident_id: str) -> None:
+        self.cancelled_incidents.add(incident_id)
+
+    def uncancel_incident(self, incident_id: str) -> None:
+        self.cancelled_incidents.discard(incident_id)
+
+    def is_cancelled(self, incident_id: str) -> bool:
+        return incident_id in self.cancelled_incidents
 
     def disable_agent(self, agent_id: str) -> None:
         self.disabled_agents.add(agent_id)

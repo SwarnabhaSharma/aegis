@@ -159,7 +159,7 @@
 | Disable individual agents | PRESENT | disabled_agents -> fail-safe stop at stage (`81a600f`) |
 | Revoke tool permissions at runtime | PRESENT | revoked_tools checked in registry.call (`81a600f`) |
 | Require-approval-for-all mode | PRESENT | flips ALLOW->APPROVE pre-transition (`81a600f`) |
-| Terminate active workflow | PARTIAL | pause covers new runs; mid-run cancellation pending (async execution) |
+| Terminate active workflow | PRESENT | pause blocks new runs; mid-run cancellation via `cancelled_incidents` flag checked in pipeline + agentic loops; `CANCELLED` state + operator transitions |
 | Safe mode + restore | PRESENT | enter_safe_mode/restore_normal (`81a600f`) |
 
 ## §18 Observability & audit
@@ -260,6 +260,7 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Tier 2 feature completions | provenance flag; full D2 verify reachability; aggregate TI tool; richer classification; override endpoint; capture list | 3.4, 7, 8, 10, 17, 18 | **DONE 815f89f** |
 | Privacy gateway | task_view wired; AI_VISIBLE_FIELDS expanded; gateway.py created; TokenVault integrated; withheld_keys audit; analyst-view + reveal endpoints | 3, 10, 15 | **DONE gateway.py** |
 | Tier 3 adversarial + tamper | adversarial corpus (test_adversarial.py); Evidence hash field; verify_evidence_integrity; integrity API endpoint; slice wiring | 15, 18 | **DONE test_adversarial.py** |
+| Mid-run cancellation | cancelled_incidents flag; pipeline + agentic loop checks; CANCELLED state; operator transitions; cancel/uncancel endpoints | 17 | **DONE test_midrun_cancel.py** |
 
 Deferred-by-decision (not backlog): executor realism (ADR-013), RAG (ADR-007).
 

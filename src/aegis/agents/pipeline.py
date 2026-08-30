@@ -62,6 +62,7 @@ class AgentPipeline:
 
         # cumulative context: each agent sees prior outputs (store-mediated)
         context = dict(incident_summary)
+        inc_id = context.get("incident_id", "")
         for agent_id in AGENTS:
             if consumed >= tool_budget:
                 steps.append(PipelineStep(agent_id, ok=False, degraded=True,
@@ -72,6 +73,13 @@ class AgentPipeline:
                                           elapsed_ms=0,
                                           error="agent disabled by operator"))
                 break
+            # §17 mid-run cancel: re-check between agents
+            if (self._controls is not None
+                    and self._controls.is_cancelled(inc_id)):
+                steps.append(PipelineStep(agent_id, ok=False, degraded=True,
+                                          elapsed_ms=0,
+                                          error="cancelled by operator"))
+                break
             tool_results = tool_calls.get(agent_id, "")
             start = time.monotonic()
             r = self._agents[agent_id].run(
@@ -79,6 +87,7 @@ class AgentPipeline:
                 tool_results,
                 registry=self._registry,
                 max_steps=self._budgets["tool_steps_per_agent"],
+                controls=self._controls,
             )
             elapsed = int((time.monotonic() - start) * 1000)
 

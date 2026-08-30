@@ -35,6 +35,12 @@ _TRANSITIONS: dict[str, dict[IncidentState, frozenset[IncidentState]]] = {
             {IncidentState.AUTHORIZED, IncidentState.RESOLVED}
         ),
         IncidentState.VERIFYING: frozenset({IncidentState.REOPENED}),
+        # §17 operator can cancel from any in-progress state
+        IncidentState.INVESTIGATING: frozenset({IncidentState.CANCELLED}),
+        IncidentState.CORRELATING: frozenset({IncidentState.CANCELLED}),
+        IncidentState.ASSESSING: frozenset({IncidentState.CANCELLED}),
+        IncidentState.RESPONSE_PLANNED: frozenset({IncidentState.CANCELLED}),
+        IncidentState.EXECUTING: frozenset({IncidentState.CANCELLED}),
     },
 }
 
