@@ -1,7 +1,4 @@
-"""Create Aegis Kibana dashboards programmatically via the saved objects API.
-
-Creates data views, visualizations, and a dashboard linking them all.
-Run after ES has some Aegis incident data (via demo_elastic.py or manual pipeline).
+"""Create Aegis Kibana dashboards using Lens visualizations (Kibana 8.19+).
 
 Usage:
     python scripts/create_kibana_dashboards.py [--kibana-url http://localhost:5601]
@@ -11,6 +8,7 @@ import argparse
 import json
 import sys
 import time
+import uuid
 
 sys.path.insert(0, "src")
 
@@ -20,313 +18,476 @@ from httpx import BasicAuth
 KIBANA_URL = "http://localhost:5601"
 KIBANA_AUTH = None
 
-# -- helpers to build short agg definitions without 150-char lines --
 
-def _terms_agg(agg_id, field, size=20, schema="bucket"):
-    return {
-        "id": agg_id, "enabled": True, "type": "terms",
-        "params": {
-            "field": field, "size": size,
-            "order": "desc", "orderBy": "1",
-        },
-        "schema": schema,
-    }
+def _col_id():
+    return str(uuid.uuid4())[:8]
 
 
-def _count_agg(agg_id="1", schema="metric"):
-    return {"id": agg_id, "enabled": True, "type": "count", "params": {}, "schema": schema}
-
-
-def _date_histogram_agg(agg_id, field, schema="segment"):
-    return {
-        "id": agg_id, "enabled": True, "type": "date_histogram",
-        "params": {
-            "field": field, "interval": "auto",
-            "min_doc_count": 1, "extended_bounds": {},
-        },
-        "schema": schema,
-    }
-
-
-def _axis(show_filter=True):
-    return {"show": True, "filter": show_filter, "truncate": 100}
-
-
-def _cat_axis(pos="bottom"):
-    return {
-        "id": "CategoryAxis-1", "type": "category",
-        "position": pos, "show": True, "labels": _axis(),
-    }
-
-
-def _val_axis(name="LeftAxis-1", pos="left"):
-    return {
-        "id": "ValueAxis-1", "name": name, "type": "value",
-        "position": pos, "show": True, "labels": _axis(False),
-    }
-
-
-# -- Kibana API helpers --
-
-def _api_call(method, kibana_url, path, body=None):
-    url = f"{kibana_url}{path}"
+def _api(method, url, body=None, auth=None, retries=3):
     headers = {"kbn-xsrf": "true", "Content-Type": "application/json"}
-    kwargs = {"headers": headers, "timeout": 60, "auth": KIBANA_AUTH}
+    kwargs = {"headers": headers, "timeout": 60, "auth": auth}
     if body is not None:
         kwargs["json"] = body
-    for attempt in range(3):
+    for attempt in range(retries):
         try:
             resp = httpx.request(method, url, **kwargs)
             if resp.status_code < 400:
-                if resp.content:
-                    return resp.json()
-                return {}
+                return resp.json() if resp.content else {}
             if resp.status_code == 404:
                 return {}
-            if resp.status_code >= 500 and attempt < 2:
+            if attempt < retries - 1:
                 time.sleep(2)
                 continue
             return resp.json() if resp.content else {}
         except httpx.TimeoutException:
-            if attempt < 2:
+            if attempt < retries - 1:
                 time.sleep(2)
                 continue
             raise
     return {}
 
 
-def _post(kibana_url, path, body):
-    return _api_call("POST", kibana_url, path, body)
+# -- Lens column builders --
 
-
-def _delete(kibana_url, path):
-    return _api_call("DELETE", kibana_url, path)
-
-
-def _search_source_json():
-    return json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})
-
-
-def create_data_view(kibana_url, view_id, title):
-    _delete(kibana_url, f"/api/data_views/data_view/{view_id}")
-    result = _post(kibana_url, "/api/data_views/data_view", {
-        "data_view": {
-            "id": view_id, "title": title,
-            "timeFieldName": "@timestamp", "name": title,
-        },
-    })
-    ok = bool(result.get("data_view"))
-    print(f"  {'OK' if ok else 'WARN'} data view: {view_id} -> {title}")
-    return view_id
-
-
-def _create_viz(kibana_url, viz_id, title, data_view_id, vis_type, agg_state):
-    _delete(kibana_url, f"/api/saved_objects/visualization/{viz_id}")
-    result = _post(kibana_url, f"/api/saved_objects/visualization/{viz_id}", {
-        "attributes": {
-            "title": title,
-            "visState": json.dumps(agg_state),
-            "uiStateJSON": "{}",
-            "description": agg_state.get("description", ""),
-            "kibanaSavedObjectMeta": {
-                "searchSourceJSON": _search_source_json(),
-            },
-        },
-        "references": [{
-            "type": "index-pattern",
-            "id": data_view_id,
-            "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
-        }],
-    })
-    ok = bool(result.get("id"))
-    print(f"  {'OK' if ok else 'WARN'} viz: {viz_id}")
-    return viz_id
-
-
-# -- data views --
-
-def create_all_data_views(kibana_url):
-    views = {
-        "incidents": "aegis-incidents",
-        "steps": "aegis-steps",
-        "audit": "aegis-audit",
-        "alerts": "aegis-alerts",
+def _count_col(col_id):
+    return {
+        "label": "Count",
+        "dataType": "number",
+        "operationType": "count",
+        "isBucketed": False,
+        "sourceField": "___records___",
+        "params": {"emptyAsNull": True},
     }
-    patterns = {
-        "incidents": "aegis-dev-incidents",
-        "steps": "aegis-dev-steps",
-        "audit": "aegis-dev-audit",
-        "alerts": "aegis-dev-alerts",
+
+
+def _terms_col(col_id, field, size=10, label=None):
+    return {
+        "label": label or f"Top values of {field}",
+        "dataType": "string",
+        "operationType": "terms",
+        "sourceField": field,
+        "isBucketed": True,
+        "params": {
+            "size": size,
+            "orderBy": {"type": "column", "columnId": col_id},
+            "orderDirection": "desc",
+            "otherBucket": True,
+            "missingBucket": False,
+            "parentFormat": {"id": "terms"},
+        },
     }
-    for name, vid in views.items():
-        create_data_view(kibana_url, vid, patterns[name])
-    return views
 
 
-# -- visualizations --
-
-def create_all_visualizations(kibana_url, views):
-    ids = []
-
-    # 1. Incident table
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-incidents", "Aegis Incidents",
-        views["incidents"], "table", {
-            "title": "Aegis Incidents", "type": "table",
-            "params": {"perPage": 25, "showPartialRows": False,
-                       "showMetricsAtAllLevels": False,
-                       "showTotal": True, "totalFunc": "count"},
-            "aggs": [
-                _count_agg(),
-                _terms_agg("2", "id", 50),
-                _terms_agg("3", "state"),
-                _terms_agg("4", "severity", 10),
-                _terms_agg("5", "type"),
-            ],
+def _date_hist_col(field, count_col_id):
+    return {
+        "label": "Count of records over @timestamp",
+        "dataType": "date",
+        "operationType": "date_histogram",
+        "sourceField": field,
+        "isBucketed": True,
+        "params": {
+            "interval": "auto",
+            "includeEmptyRows": True,
+            "dropPartials": False,
         },
-    ))
+    }
 
-    # 2. Severity pie
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-severity", "Severity Distribution",
-        views["incidents"], "pie", {
-            "title": "Severity Distribution", "type": "pie",
-            "params": {
-                "type": "pie", "addTooltip": True, "addLegend": True,
-                "legendPosition": "right", "isDonut": True,
-                "labels": {"show": True, "values": True,
-                           "last_level": True, "truncate": 100},
-            },
-            "aggs": [_count_agg(), _terms_agg("2", "severity", 10, "segment")],
+
+def _term_num_col(col_id, field, label=None):
+    return {
+        "label": label or f"Top values of {field}",
+        "dataType": "string",
+        "operationType": "terms",
+        "sourceField": field,
+        "isBucketed": True,
+        "params": {
+            "size": 10,
+            "orderBy": {"type": "column", "columnId": col_id},
+            "orderDirection": "desc",
+            "otherBucket": False,
+            "missingBucket": False,
+            "parentFormat": {"id": "terms"},
         },
-    ))
-
-    # 3. States bar
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-states", "Incident States",
-        views["incidents"], "histogram", {
-            "title": "Incident States", "type": "histogram",
-            "params": {
-                "type": "histogram", "grid": {"categoryLines": False},
-                "categoryAxes": [_cat_axis()],
-                "valueAxes": [_val_axis()],
-                "addTooltip": True, "addLegend": True,
-                "legendPosition": "right",
-            },
-            "aggs": [_count_agg(), _terms_agg("2", "state", 20, "segment")],
-        },
-    ))
-
-    # 4. Steps by kind
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-evidence-host", "Evidence by Host",
-        views["steps"], "horizontal_bar", {
-            "title": "Evidence by Host", "type": "horizontal_bar",
-            "params": {
-                "type": "horizontal_bar",
-                "grid": {"categoryLines": False},
-                "categoryAxes": [_cat_axis("left")],
-                "valueAxes": [_val_axis("BottomAxis-1", "bottom")],
-                "addTooltip": True, "addLegend": True,
-                "legendPosition": "right",
-            },
-            "aggs": [_count_agg(), _terms_agg("2", "kind", 20, "segment")],
-        },
-    ))
-
-    # 5. ATT&CK table
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-attack", "ATT&CK Techniques",
-        views["steps"], "table", {
-            "title": "ATT&CK Techniques", "type": "table",
-            "params": {"perPage": 20, "showPartialRows": False,
-                       "showMetricsAtAllLevels": False,
-                       "showTotal": True, "totalFunc": "count"},
-            "aggs": [_count_agg(), _terms_agg("2", "kind", 10)],
-        },
-    ))
-
-    # 6. Timeline area
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-timeline", "Event Timeline",
-        views["steps"], "area", {
-            "title": "Event Timeline", "type": "area",
-            "params": {
-                "type": "area", "grid": {"categoryLines": False},
-                "categoryAxes": [_cat_axis()],
-                "valueAxes": [_val_axis()],
-                "addTooltip": True, "addLegend": True,
-                "legendPosition": "right", "mode": "stacked",
-                "times": [], "addTimeMarker": False,
-            },
-            "aggs": [
-                _count_agg(),
-                _date_histogram_agg("2", "ts"),
-                _terms_agg("3", "kind", 10, "group"),
-            ],
-        },
-    ))
-
-    # 7. Audit trail
-    ids.append(_create_viz(
-        kibana_url, "aegis-viz-audit", "Audit Trail",
-        views["audit"], "table", {
-            "title": "Audit Trail", "type": "table",
-            "params": {"perPage": 50, "showPartialRows": False,
-                       "showMetricsAtAllLevels": False,
-                       "showTotal": True, "totalFunc": "count"},
-            "aggs": [
-                _count_agg(),
-                _terms_agg("2", "category"),
-                _terms_agg("3", "actor"),
-            ],
-        },
-    ))
-
-    return ids
+    }
 
 
-# -- dashboard --
+# -- Panel builders --
 
-def create_dashboard(kibana_url, viz_ids):
-    dash_id = "aegis-dashboard"
-    _delete(kibana_url, f"/api/saved_objects/dashboard/{dash_id}")
-
-    panels, references = [], []
-    for i, vid in enumerate(viz_ids):
-        row, col = i // 2, i % 2
-        panels.append({
-            "version": "8.15.0", "type": "visualization",
-            "gridData": {"x": col * 24, "y": row * 15,
-                         "w": 24, "h": 15, "i": str(i)},
-            "panelIndex": str(i), "embeddableConfig": {},
-        })
-        references.append({"type": "visualization", "id": vid, "name": f"panel_{i}"})
-
-    result = _post(kibana_url, f"/api/saved_objects/dashboard/{dash_id}", {
-        "attributes": {
-            "title": "Aegis SOC Overview",
-            "description": "Aegis — incidents, evidence, ATT&CK, audit",
-            "panelsJSON": json.dumps(panels),
-            "optionsJSON": json.dumps({
-                "useMargins": True, "syncColors": False,
-                "syncCursor": True, "syncTooltips": False,
-                "hidePanelTitles": False,
-            }),
-            "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
-            "refreshInterval": {"pause": False, "value": 30000},
-            "kibanaSavedObjectMeta": {
-                "searchSourceJSON": _search_source_json(),
+def _lens_panel(panel_index, x, y, w, h, title, viz_type, state, refs):
+    return {
+        "version": "8.15.0",
+        "type": "lens",
+        "panelIndex": panel_index,
+        "gridData": {"x": x, "y": y, "w": w, "h": h, "i": panel_index},
+        "embeddableConfig": {
+            "enhancements": {"dynamicActions": {"events": []}},
+            "syncColors": False,
+            "syncCursor": True,
+            "syncTooltips": False,
+            "filters": [],
+            "query": {"query": "", "language": "kuery"},
+            "attributes": {
+                "title": title,
+                "visualizationType": viz_type,
+                "type": "lens",
+                "references": refs,
+                "state": state,
             },
         },
-        "references": references,
-    })
-    ok = bool(result.get("id"))
-    print(f"  {'OK' if ok else 'WARN'} dashboard: {dash_id}")
-    return dash_id
+    }
 
 
-# -- main --
+def _xy_layer(layer_id, x_col, y_cols, split_col=None, series_type="bar_stacked"):
+    layer = {
+        "layerId": layer_id,
+        "seriesType": series_type,
+        "xAccessor": x_col,
+        "accessors": y_cols,
+        "layerType": "data",
+    }
+    if split_col:
+        layer["splitAccessor"] = split_col
+    return layer
+
+
+def _pie_layer(layer_id, metric_col, shape_col, metric_type="count"):
+    layer = {
+        "layerId": layer_id,
+        "primaryGroups": [shape_col],
+        "metric": metric_col,
+        "numberDisplay": "percent",
+        "legendDisplay": "default",
+        "layerType": "data",
+    }
+    return layer
+
+
+def _dt_layer(layer_id, columns):
+    return {
+        "layerId": layer_id,
+        "columns": columns,
+        "layerType": "data",
+    }
+
+
+def _lens_state(visualization, layers, datasource_cols):
+    layer_id = "layer0"
+    return {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            **visualization,
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": datasource_cols,
+                        "columnOrder": list(datasource_cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+
+def _data_view_ref(layer_id, data_view_id):
+    return {
+        "type": "index-pattern",
+        "id": data_view_id,
+        "name": f"indexpattern-datasource-layer-{layer_id}",
+    }
+
+
+# -- Visualization definitions --
+
+def _incidents_table(dv_id):
+    layer_id = "layer0"
+    x = _col_id()
+    state_col = _col_id()
+    sev_col = _col_id()
+    type_col = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        x: _terms_col(cnt, "id", 20, "Incident ID"),
+        state_col: _terms_col(cnt, "state", 10, "State"),
+        sev_col: _terms_col(cnt, "severity", 10, "Severity"),
+        type_col: _terms_col(cnt, "type", 10, "Type"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_stacked",
+            "layers": [_xy_layer(layer_id, x, [cnt], series_type="bar_stacked")],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Aegis Incidents"
+
+
+def _severity_pie(dv_id):
+    layer_id = "layer0"
+    sev = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        sev: _terms_col(cnt, "severity", 10, "Severity"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_stacked",
+            "layers": [_xy_layer(layer_id, sev, [cnt], series_type="bar_stacked")],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Severity Distribution"
+
+
+def _states_bar(dv_id):
+    layer_id = "layer0"
+    state_f = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        state_f: _terms_col(cnt, "state", 20, "State"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_stacked",
+            "layers": [_xy_layer(layer_id, state_f, [cnt], series_type="bar_stacked")],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Incident States"
+
+
+def _evidence_by_kind(dv_id):
+    layer_id = "layer0"
+    kind = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        kind: _terms_col(cnt, "kind", 20, "Evidence Kind"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_horizontal",
+            "layers": [_xy_layer(layer_id, kind, [cnt], series_type="bar_horizontal")],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Evidence by Kind"
+
+
+def _attack_table(dv_id):
+    layer_id = "layer0"
+    kind = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        kind: _terms_col(cnt, "kind", 20, "ATT&CK Technique"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_stacked",
+            "layers": [_xy_layer(layer_id, kind, [cnt])],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "ATT&CK Techniques"
+
+
+def _timeline(dv_id):
+    layer_id = "layer0"
+    ts = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        ts: _date_hist_col("ts", cnt),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "area_stacked",
+            "layers": [_xy_layer(layer_id, ts, [cnt], series_type="area_stacked")],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Event Timeline"
+
+
+def _audit_table(dv_id):
+    layer_id = "layer0"
+    cat = _col_id()
+    actor = _col_id()
+    cnt = _col_id()
+
+    cols = {
+        cat: _terms_col(cnt, "category", 20, "Category"),
+        actor: _terms_col(cnt, "actor", 20, "Actor"),
+        cnt: _count_col(cnt),
+    }
+
+    viz_state = {
+        "visualization": {
+            "legend": {"isVisible": True, "position": "right"},
+            "preferredSeriesType": "bar_stacked",
+            "layers": [_xy_layer(layer_id, cat, [cnt])],
+        },
+        "query": {"query": "", "language": "kuery"},
+        "filters": [],
+        "datasourceStates": {
+            "formBased": {
+                "layers": {
+                    layer_id: {
+                        "columns": cols,
+                        "columnOrder": list(cols.keys()),
+                        "incompleteColumns": {},
+                    }
+                }
+            }
+        },
+    }
+
+    return viz_state, [_data_view_ref(layer_id, dv_id)], "lnsXY", "Audit Trail"
+
+
+# -- Dashboard --
+
+VIZ_DEFS = [
+    ("incidents", _incidents_table),
+    ("incidents", _severity_pie),
+    ("incidents", _states_bar),
+    ("steps", _evidence_by_kind),
+    ("steps", _attack_table),
+    ("steps", _timeline),
+    ("audit", _audit_table),
+]
+
+
+def build_dashboard_panels(views):
+    panels = []
+    references = []
+
+    for i, (view_key, viz_fn) in enumerate(VIZ_DEFS):
+        dv_id = views[view_key]
+        viz_state, viz_refs, viz_type, title = viz_fn(dv_id)
+
+        row = i // 2
+        col = i % 2
+        panel_index = str(i)
+
+        panel = _lens_panel(
+            panel_index, col * 24, row * 15, 24, 15,
+            title, viz_type, viz_state, viz_refs,
+        )
+        panels.append(panel)
+
+        for ref in viz_refs:
+            references.append({
+                **ref,
+                "name": f"{panel_index}:{ref['name']}",
+            })
+
+    return panels, references
+
 
 def main():
     parser = argparse.ArgumentParser(description="Create Aegis Kibana dashboards")
@@ -340,26 +501,92 @@ def main():
         KIBANA_AUTH = BasicAuth(args.kibana_user, args.kibana_pass)
 
     kibana_url = args.kibana_url
+    base = f"{kibana_url}"
+
     print(f"Kibana: {kibana_url}")
 
+    # Check Kibana
     try:
-        resp = httpx.get(
-            f"{kibana_url}/api/status", timeout=60, auth=KIBANA_AUTH,
-        )
+        resp = httpx.get(f"{base}/api/status", timeout=60, auth=KIBANA_AUTH)
         status = resp.json().get("status", {}).get("overall", {}).get("level")
         print(f"Status: {status}")
     except Exception as e:
         print(f"Cannot reach Kibana: {e}")
         sys.exit(1)
 
+    # Delete old broken objects
+    print("\n--- Cleaning up old objects ---")
+    for vid in [
+        "aegis-viz-incidents", "aegis-viz-severity", "aegis-viz-states",
+        "aegis-viz-evidence-host", "aegis-viz-attack", "aegis-viz-timeline",
+        "aegis-viz-audit", "aegis-dashboard",
+    ]:
+        for otype in ["visualization", "dashboard"]:
+            _api("DELETE", f"{base}/api/saved_objects/{otype}/{vid}", auth=KIBANA_AUTH)
+
+    # Delete old data views and recreate
     print("\n--- Data Views ---")
-    views = create_all_data_views(kibana_url)
+    views = {
+        "incidents": "aegis-incidents",
+        "steps": "aegis-steps",
+        "audit": "aegis-audit",
+        "alerts": "aegis-alerts",
+    }
+    patterns = {
+        "incidents": "aegis-dev-incidents",
+        "steps": "aegis-dev-steps",
+        "audit": "aegis-dev-audit",
+        "alerts": "aegis-dev-alerts",
+    }
+    time_fields = {
+        "incidents": "created_at",
+        "steps": "ts",
+        "audit": "ts",
+        "alerts": "@timestamp",
+    }
+    for name, vid in views.items():
+        _api("DELETE", f"{base}/api/data_views/data_view/{vid}", auth=KIBANA_AUTH)
+        result = _api("POST", f"{base}/api/data_views/data_view", {
+            "data_view": {
+                "id": vid, "title": patterns[name],
+                "timeFieldName": time_fields[name], "name": patterns[name],
+            },
+        }, auth=KIBANA_AUTH)
+        ok = bool(result.get("data_view"))
+        print(f"  {'OK' if ok else 'WARN'} {vid} -> {patterns[name]} (time: {time_fields[name]})")
 
-    print("\n--- Visualizations ---")
-    viz_ids = create_all_visualizations(kibana_url, views)
+    # Build dashboard with inline Lens panels
+    print("\n--- Building dashboard with Lens panels ---")
+    panels, references = build_dashboard_panels(views)
+    print(f"  Built {len(panels)} Lens panels")
 
-    print("\n--- Dashboard ---")
-    create_dashboard(kibana_url, viz_ids)
+    # Create dashboard
+    result = _api("POST", f"{base}/api/saved_objects/dashboard/aegis-dashboard", {
+        "attributes": {
+            "title": "Aegis SOC Overview",
+            "description": "Aegis — incidents, evidence, ATT&CK, audit",
+            "panelsJSON": json.dumps(panels),
+            "optionsJSON": json.dumps({
+                "useMargins": True, "syncColors": False,
+                "syncCursor": True, "syncTooltips": False,
+                "hidePanelTitles": False,
+            }),
+            "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
+            "refreshInterval": {"pause": False, "value": 30000},
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({
+                    "query": {"query": "", "language": "kuery"},
+                    "filter": [],
+                }),
+            },
+        },
+        "references": references,
+    }, auth=KIBANA_AUTH)
+
+    ok = bool(result.get("id"))
+    print(f"  {'OK' if ok else 'WARN'} dashboard: aegis-dashboard")
+    if not ok:
+        print(f"  Error: {result}")
 
     print(f"\nDone. Open {kibana_url}/app/dashboards#/view/aegis-dashboard")
 
