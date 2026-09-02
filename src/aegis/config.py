@@ -30,6 +30,11 @@ class Settings(BaseSettings):
 
     aegis_api_key: str = ""  # §17: API auth; empty = disabled (local dev)
 
+    # Elastic alert ingestion (adapter polls this index for new alerts)
+    es_alert_index: str = "aegis-dev-alerts"  # or ".siem-signals-*" for real Elastic Security
+    es_poll_interval: int = 30  # seconds between polls
+    es_poll_enabled: bool = False  # enable via env AEGIS_ES_POLL_ENABLED=1
+
 
 @lru_cache
 def get_settings() -> Settings:

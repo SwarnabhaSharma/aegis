@@ -47,6 +47,16 @@ def _make_store():
     return InMemoryStore()
 
 
+def _get_es_client():
+    """Create an ES client from settings (for elastic adapter endpoints)."""
+    from elasticsearch import Elasticsearch
+    s = get_settings()
+    return Elasticsearch(
+        s.es_host, basic_auth=(s.es_user, s.es_password),
+        verify_certs=s.es_verify_certs, request_timeout=60,
+    )
+
+
 def create_app(store=None, llm=None, controls=None) -> FastAPI:
     from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -487,6 +497,38 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         from aegis.intel.graph import load_graph
         nodes, edges = load_graph(st, incident_id)
         return {"incident_id": incident_id, "nodes": nodes, "edges": edges}
+
+    # -- elastic integration --
+
+    @app.get("/elastic/status", tags=["elastic"])
+    def elastic_status():
+        """Check ES connection + alert index status."""
+        try:
+            es_client = _get_es_client()
+            resp = es_client.count(index=settings.es_alert_index)
+            return {"connected": True, "alert_count": resp["count"],
+                    "alert_index": settings.es_alert_index}
+        except Exception as e:
+            return {"connected": False, "error": str(e)}
+
+    @app.post("/elastic/poll", tags=["elastic"])
+    def elastic_poll():
+        """One poll cycle: fetch uningested alerts → normalize → ingest."""
+        from aegis.integrations.elastic_adapter import ElasticAlertPoller
+        es_client = _get_es_client()
+        poller = ElasticAlertPoller(es=es_client, alert_index=settings.es_alert_index, store=st)
+        incidents = poller.poll_once()
+        return {"polled": len(incidents),
+                "incident_ids": [i.id for i in incidents]}
+
+    @app.post("/elastic/synthetic", tags=["elastic"])
+    def elastic_synthetic(count: int = 5):
+        """Generate synthetic alerts for demo."""
+        from aegis.integrations.elastic_adapter import generate_synthetic_alerts
+        es_client = _get_es_client()
+        written = generate_synthetic_alerts(
+            es=es_client, index=settings.es_alert_index, count=count)
+        return {"generated": written, "index": settings.es_alert_index}
 
     return app
 

@@ -34,6 +34,54 @@ _STEPS_MAPPINGS = {
         "kind": {"type": "keyword"},
         "incident_id": {"type": "keyword"},
         "ts": {"type": "date"},
+        "doc": {
+            "properties": {
+                "host": {"type": "keyword"},
+                "user": {"type": "keyword"},
+                "process": {"type": "keyword"},
+                "pid": {"type": "integer"},
+                "source_ip": {"type": "ip"},
+                "destination_ip": {"type": "ip"},
+                "file_path": {"type": "keyword"},
+                "classification": {"type": "keyword"},
+                "confidence": {"type": "float"},
+                "agent": {"type": "keyword"},
+                "ok": {"type": "boolean"},
+                "degraded": {"type": "boolean"},
+                "llm_attempts": {"type": "integer"},
+                "from_state": {"type": "keyword"},
+                "to_state": {"type": "keyword"},
+                "actor": {"type": "keyword"},
+                "decision": {"type": "keyword"},
+                "action": {"type": "keyword"},
+                "techniques": {
+                    "properties": {
+                        "id": {"type": "keyword"},
+                        "name": {"type": "keyword"},
+                        "confidence": {"type": "float"},
+                    }
+                },
+            }
+        },
+    }
+}
+
+_ALERT_MAPPINGS = {
+    "properties": {
+        "@timestamp": {"type": "date"},
+        "rule.name": {"type": "keyword"},
+        "rule.id": {"type": "keyword"},
+        "rule.severity": {"type": "integer"},
+        "host.name": {"type": "keyword"},
+        "user.name": {"type": "keyword"},
+        "process.name": {"type": "keyword"},
+        "process.pid": {"type": "integer"},
+        "process.command_line": {"type": "text"},
+        "source.ip": {"type": "ip"},
+        "destination.ip": {"type": "ip"},
+        "file.path": {"type": "keyword"},
+        "aegis_ingested": {"type": "boolean"},
+        "aegis_incident_id": {"type": "keyword"},
     }
 }
 
