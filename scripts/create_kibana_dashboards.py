@@ -14,8 +14,10 @@ import sys
 sys.path.insert(0, "src")
 
 import httpx
+from httpx import BasicAuth
 
 KIBANA_URL = "http://localhost:5601"
+KIBANA_AUTH = None  # set by --kibana-user/--kibana-pass
 
 # -- helpers to build short agg definitions without 150-char lines --
 
@@ -69,13 +71,16 @@ def _post(kibana_url, path, body):
     resp = httpx.post(
         f"{kibana_url}{path}",
         headers={"kbn-xsrf": "true", "Content-Type": "application/json"},
-        json=body, timeout=30,
+        json=body, timeout=30, auth=KIBANA_AUTH,
     )
     return resp.json()
 
 
 def _delete(kibana_url, path):
-    httpx.delete(f"{kibana_url}{path}", headers={"kbn-xsrf": "true"}, timeout=10)
+    httpx.delete(
+        f"{kibana_url}{path}",
+        headers={"kbn-xsrf": "true"}, timeout=10, auth=KIBANA_AUTH,
+    )
 
 
 def create_data_view(kibana_url, view_id, title):
@@ -293,13 +298,21 @@ def create_dashboard(kibana_url, viz_ids):
 def main():
     parser = argparse.ArgumentParser(description="Create Aegis Kibana dashboards")
     parser.add_argument("--kibana-url", default=KIBANA_URL)
+    parser.add_argument("--kibana-user", default=None)
+    parser.add_argument("--kibana-pass", default=None)
     args = parser.parse_args()
+
+    global KIBANA_AUTH
+    if args.kibana_user and args.kibana_pass:
+        KIBANA_AUTH = BasicAuth(args.kibana_user, args.kibana_pass)
 
     kibana_url = args.kibana_url
     print(f"Kibana: {kibana_url}")
 
     try:
-        resp = httpx.get(f"{kibana_url}/api/status", timeout=5)
+        resp = httpx.get(
+            f"{kibana_url}/api/status", timeout=5, auth=KIBANA_AUTH,
+        )
         status = resp.json().get("status", {}).get("overall", {}).get("level")
         print(f"Status: {status}")
     except Exception as e:
