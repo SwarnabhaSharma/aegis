@@ -6,7 +6,6 @@ Usage:
 """
 
 import sys
-import time
 
 sys.path.insert(0, "src")
 
@@ -74,8 +73,8 @@ def main():
         ev = store.evidence(inc_id)
         print(f"  {inc.id}: {inc.state.value} | {len(ev)} evidence | {inc.severity}")
 
-    print(f"\nDone. Open Kibana at http://localhost:5601 to view dashboards.")
-    print(f"Or view the console at http://localhost:8000/")
+    print("\nDone. Open Kibana at http://localhost:5601 to view dashboards.")
+    print("Or view the console at http://localhost:8000/")
 
 
 if __name__ == "__main__":

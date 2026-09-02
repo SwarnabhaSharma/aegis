@@ -7,7 +7,6 @@ Requires Kibana running and accessible. Reads NDJSON files from kibana/dashboard
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
