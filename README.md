@@ -66,7 +66,7 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ES_HOST` | `http://192.168.56.105:9200` | Elasticsearch endpoint |
+| `ES_HOST` | `http://vm_ip:9200` | Elasticsearch endpoint |
 | `ES_USER` / `ES_PASSWORD` | elastic / — | ES credentials (gitignored `.env` only) |
 | `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server |
 | `LLM_MODEL` | — | Model id/path (recorded in per-incident manifest) |
