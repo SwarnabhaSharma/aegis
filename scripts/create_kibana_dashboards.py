@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import sys
+import time
 
 sys.path.insert(0, "src")
 
@@ -17,7 +18,7 @@ import httpx
 from httpx import BasicAuth
 
 KIBANA_URL = "http://localhost:5601"
-KIBANA_AUTH = None  # set by --kibana-user/--kibana-pass
+KIBANA_AUTH = None
 
 # -- helpers to build short agg definitions without 150-char lines --
 
@@ -67,26 +68,52 @@ def _val_axis(name="LeftAxis-1", pos="left"):
 
 # -- Kibana API helpers --
 
+def _api_call(method, kibana_url, path, body=None):
+    url = f"{kibana_url}{path}"
+    headers = {"kbn-xsrf": "true", "Content-Type": "application/json"}
+    kwargs = {"headers": headers, "timeout": 60, "auth": KIBANA_AUTH}
+    if body is not None:
+        kwargs["json"] = body
+    for attempt in range(3):
+        try:
+            resp = httpx.request(method, url, **kwargs)
+            if resp.status_code < 400:
+                if resp.content:
+                    return resp.json()
+                return {}
+            if resp.status_code == 404:
+                return {}
+            if resp.status_code >= 500 and attempt < 2:
+                time.sleep(2)
+                continue
+            return resp.json() if resp.content else {}
+        except httpx.TimeoutException:
+            if attempt < 2:
+                time.sleep(2)
+                continue
+            raise
+    return {}
+
+
 def _post(kibana_url, path, body):
-    resp = httpx.post(
-        f"{kibana_url}{path}",
-        headers={"kbn-xsrf": "true", "Content-Type": "application/json"},
-        json=body, timeout=30, auth=KIBANA_AUTH,
-    )
-    return resp.json()
+    return _api_call("POST", kibana_url, path, body)
 
 
 def _delete(kibana_url, path):
-    httpx.delete(
-        f"{kibana_url}{path}",
-        headers={"kbn-xsrf": "true"}, timeout=10, auth=KIBANA_AUTH,
-    )
+    return _api_call("DELETE", kibana_url, path)
+
+
+def _search_source_json():
+    return json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})
 
 
 def create_data_view(kibana_url, view_id, title):
     _delete(kibana_url, f"/api/data_views/data_view/{view_id}")
     result = _post(kibana_url, "/api/data_views/data_view", {
-        "data_view": {"id": view_id, "title": title, "timeFieldName": "@timestamp", "name": title},
+        "data_view": {
+            "id": view_id, "title": title,
+            "timeFieldName": "@timestamp", "name": title,
+        },
     })
     ok = bool(result.get("data_view"))
     print(f"  {'OK' if ok else 'WARN'} data view: {view_id} -> {title}")
@@ -101,6 +128,9 @@ def _create_viz(kibana_url, viz_id, title, data_view_id, vis_type, agg_state):
             "visState": json.dumps(agg_state),
             "uiStateJSON": "{}",
             "description": agg_state.get("description", ""),
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": _search_source_json(),
+            },
         },
         "references": [{
             "type": "index-pattern",
@@ -285,6 +315,9 @@ def create_dashboard(kibana_url, viz_ids):
             }),
             "timeRestore": True, "timeTo": "now", "timeFrom": "now-24h",
             "refreshInterval": {"pause": False, "value": 30000},
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": _search_source_json(),
+            },
         },
         "references": references,
     })
@@ -311,7 +344,7 @@ def main():
 
     try:
         resp = httpx.get(
-            f"{kibana_url}/api/status", timeout=5, auth=KIBANA_AUTH,
+            f"{kibana_url}/api/status", timeout=60, auth=KIBANA_AUTH,
         )
         status = resp.json().get("status", {}).get("overall", {}).get("level")
         print(f"Status: {status}")
