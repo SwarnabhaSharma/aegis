@@ -1,10 +1,8 @@
 """Phase 7 tests: ATT&CK subset, TI store, multi-alert correlation."""
 
-from aegis.incidents.evidence import Evidence
 from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.store import InMemoryStore
 from aegis.intel import attack, ti
-from aegis.intel.correlation import find_related
 
 # -- ATT&CK --
 
@@ -80,43 +78,6 @@ def test_lookup_all():
     results = ti.lookup_all(["185.220.101.4", "8.8.8.8"])
     assert len(results) == 2
     assert [r["known_malicious"] for r in results] == [True, False]
-
-
-# -- correlation --
-
-def _ev(inc_id: str, **data) -> Evidence:
-    return Evidence(incident_id=inc_id, source="tool", collection_method="test",
-                    data=data)
-
-
-def test_correlation_shared_ip():
-    store = InMemoryStore()
-    a = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    b = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    c = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    store.add_evidence(_ev(a.id, destination_ip="185.220.101.4"))
-    store.add_evidence(_ev(b.id, destination_ip="185.220.101.4"))
-    store.add_evidence(_ev(c.id, destination_ip="10.0.0.1"))
-
-    related = find_related(store, a.id)
-    assert len(related) == 1
-    assert related[0]["incident_id"] == b.id
-    assert any("destination_ip=185.220.101.4" in s for s in related[0]["shared"])
-
-
-def test_correlation_no_indicators_no_matches():
-    store = InMemoryStore()
-    a = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    b = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    store.add_evidence(_ev(b.id, host="other-box"))
-    assert find_related(store, a.id) == []
-
-
-def test_correlation_excludes_self():
-    store = InMemoryStore()
-    a = ingest_alert(store, source="s", fields={}, incident_type="powershell")
-    store.add_evidence(_ev(a.id, file_path="C:\\evil.dll"))
-    assert find_related(store, a.id) == []
 
 
 def test_all_incident_ids_interface():

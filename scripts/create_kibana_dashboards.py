@@ -93,24 +93,6 @@ def _date_hist_col(field, count_col_id):
     }
 
 
-def _term_num_col(col_id, field, label=None):
-    return {
-        "label": label or f"Top values of {field}",
-        "dataType": "string",
-        "operationType": "terms",
-        "sourceField": field,
-        "isBucketed": True,
-        "params": {
-            "size": 10,
-            "orderBy": {"type": "column", "columnId": col_id},
-            "orderDirection": "desc",
-            "otherBucket": False,
-            "missingBucket": False,
-            "parentFormat": {"id": "terms"},
-        },
-    }
-
-
 # -- Panel builders --
 
 def _lens_panel(panel_index, x, y, w, h, title, viz_type, state, refs):
@@ -147,18 +129,6 @@ def _xy_layer(layer_id, x_col, y_cols, split_col=None, series_type="bar_stacked"
     }
     if split_col:
         layer["splitAccessor"] = split_col
-    return layer
-
-
-def _pie_layer(layer_id, metric_col, shape_col, metric_type="count"):
-    layer = {
-        "layerId": layer_id,
-        "primaryGroups": [shape_col],
-        "metric": metric_col,
-        "numberDisplay": "percent",
-        "legendDisplay": "default",
-        "layerType": "data",
-    }
     return layer
 
 
