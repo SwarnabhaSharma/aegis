@@ -164,11 +164,17 @@ def cross_incident_ioc_edges(store, current_incident_id: str) -> list[dict]:
     mine = indicators(current_incident_id)
     if not mine:
         return []
+    other_ids = [i for i in store.all_incident_ids() if i != current_incident_id]
+    if not other_ids:
+        return []
+    # ponytail: batch-load all other evidence to avoid N+1 queries.
+    # InMemoryStore: O(1) per call; ES store: would benefit from terms query.
+    other_indicators: dict[str, set[str]] = {}
+    for other in other_ids:
+        other_indicators[other] = indicators(other)
     edges: list[dict] = []
-    for other in store.all_incident_ids():
-        if other == current_incident_id:
-            continue
-        shared = sorted(mine & indicators(other))
+    for other, theirs in other_indicators.items():
+        shared = sorted(mine & theirs)
         for val in shared:
             edges.append({
                 "incident_id": current_incident_id,

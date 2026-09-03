@@ -88,15 +88,28 @@ class InMemoryStore(IncidentStore):
         return inc
 
     def add_transition(self, transition: Transition) -> None:
-        self._transitions.setdefault(transition.incident_id, []).append(transition)
-        self.add_timeline(
-            TimelineEntry(
-                incident_id=transition.incident_id,
-                actor=transition.actor,
-                action="transition",
-                detail=f"{transition.from_state.value} -> {transition.to_state.value}",
+        lock = self._locks.get(transition.incident_id)
+        if lock is not None:
+            with lock:
+                self._transitions.setdefault(transition.incident_id, []).append(transition)
+                self._timeline.setdefault(transition.incident_id, []).append(
+                    TimelineEntry(
+                        incident_id=transition.incident_id,
+                        actor=transition.actor,
+                        action="transition",
+                        detail=f"{transition.from_state.value} -> {transition.to_state.value}",
+                    )
+                )
+        else:
+            self._transitions.setdefault(transition.incident_id, []).append(transition)
+            self.add_timeline(
+                TimelineEntry(
+                    incident_id=transition.incident_id,
+                    actor=transition.actor,
+                    action="transition",
+                    detail=f"{transition.from_state.value} -> {transition.to_state.value}",
+                )
             )
-        )
 
     def transitions(self, incident_id: str) -> list[Transition]:
         return list(self._transitions.get(incident_id, []))

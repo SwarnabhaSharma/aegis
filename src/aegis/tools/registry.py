@@ -65,6 +65,8 @@ class _Bucket:
 
 
 class ToolRegistry:
+    _pool = ThreadPoolExecutor(max_workers=4)  # ponytail: shared pool, avoids per-call alloc
+
     def __init__(self, controls=None, permission_provider=None) -> None:
         self._tools: dict[str, Tool] = {}
         self.controls = controls
@@ -110,13 +112,11 @@ class ToolRegistry:
             result = None
             for attempt in range(attempts):
                 try:
-                    with ThreadPoolExecutor(max_workers=1) as pool:
-                        # ponytail: hung worker leaks on timeout; subprocess
-                        # isolation only if a real backend ever hangs
-                        future = pool.submit(tool.func, **kwargs)
-                        result = future.result(timeout=tool.timeout_ms / 1000)
+                    future = self._pool.submit(tool.func, **kwargs)
+                    result = future.result(timeout=tool.timeout_ms / 1000)
                     break
                 except TimeoutError:
+                    future.cancel()
                     raise RuntimeError(
                         f"{name} timed out after {tool.timeout_ms}ms") from None
                 except Exception as e:

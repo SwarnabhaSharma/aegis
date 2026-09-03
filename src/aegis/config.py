@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     es_host: str = "http://192.168.56.105:9200"
     es_user: str = "elastic"
     es_password: str = ""
-    es_verify_certs: bool = False
+    es_verify_certs: bool = True  # fail-closed; override to False in dev only
     es_telemetry_index: str = "telemetry-synthetic-2026.08"
 
     llm_provider: str = "llamacpp"

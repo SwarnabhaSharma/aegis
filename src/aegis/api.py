@@ -47,14 +47,20 @@ def _make_store():
     return InMemoryStore()
 
 
+_es_singleton = None
+
+
 def _get_es_client():
-    """Create an ES client from settings (for elastic adapter endpoints)."""
-    from elasticsearch import Elasticsearch
-    s = get_settings()
-    return Elasticsearch(
-        s.es_host, basic_auth=(s.es_user, s.es_password),
-        verify_certs=s.es_verify_certs, request_timeout=60,
-    )
+    """Return a shared ES client (singleton)."""
+    global _es_singleton
+    if _es_singleton is None:
+        from elasticsearch import Elasticsearch
+        s = get_settings()
+        _es_singleton = Elasticsearch(
+            s.es_host, basic_auth=(s.es_user, s.es_password),
+            verify_certs=s.es_verify_certs, request_timeout=60,
+        )
+    return _es_singleton
 
 
 def create_app(store=None, llm=None, controls=None) -> FastAPI:
@@ -85,14 +91,23 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         return response
 
     # §17 API key auth: skip for console UI (HTML) and health endpoints
-    if settings.aegis_api_key:
+    # ponytail: in dev (aegis_env == "dev") and empty key, auth is disabled.
+    # In prod, require a key — fail closed.
+    if settings.aegis_api_key or settings.aegis_env == "dev":
         class AuthMiddleware(BaseHTTPMiddleware):
             SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json"}
+            # Exact paths that skip auth (console HTML pages only)
+            SKIP_CONSOLE = {"/console/audit"}
 
             async def dispatch(self, request: Request, call_next):
-                if (request.url.path in self.SKIP_PATHS
-                        or request.url.path.startswith("/static")
-                        or request.url.path.startswith("/console")):
+                path = request.url.path
+                if (path in self.SKIP_PATHS
+                        or path.startswith("/static")
+                        or path in self.SKIP_CONSOLE
+                        or path.startswith("/incidents/") and path.endswith("/console")
+                        or path.startswith("/incidents/") and "/console/" in path):
+                    return await call_next(request)
+                if not settings.aegis_api_key:
                     return await call_next(request)
                 key = request.headers.get("X-API-Key", "")
                 if key != settings.aegis_api_key:
@@ -236,11 +251,14 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     @app.post("/incidents/{incident_id}/override", tags=["operator"])
     def emergency_override(incident_id: str, decision: str = "ALLOW"):
         """§17 emergency override: operator forces a policy decision."""
+        import logging
+
         from aegis.policies.engine import Decision, evaluate
 
         _get(inc_id := incident_id)
         if decision not in ("ALLOW", "DENY"):
             raise HTTPException(status_code=400, detail="decision must be ALLOW or DENY")
+        logging.warning("EMERGENCY OVERRIDE: incident=%s decision=%s", inc_id, decision)
         d = Decision[decision]
         evaluate("override", {}, override=d, store=st, incident_id=inc_id)
         from datetime import UTC, datetime
@@ -525,6 +543,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     def elastic_synthetic(count: int = 5):
         """Generate synthetic alerts for demo."""
         from aegis.integrations.elastic_adapter import generate_synthetic_alerts
+        count = min(count, 100)  # ponytail: cap to prevent abuse
         es_client = _get_es_client()
         written = generate_synthetic_alerts(
             es=es_client, index=settings.es_alert_index, count=count)
