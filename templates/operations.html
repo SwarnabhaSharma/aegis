@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Operations — Aegis{% endblock %}
+{% block content %}
+<h2>Autonomous Operations</h2>
+
+<div class="card" id="ops-status">
+  <h3>Loop Status</h3>
+  <table>
+    <tr><td class="muted">Running</td><td><span class="badge badge-{{ 'authorized' if status.running else 'failed' }}">{{ status.running }}</span></td></tr>
+    <tr><td class="muted">Processed</td><td id="ops-processed">{{ status.processed }}</td></tr>
+    <tr><td class="muted">Failed</td><td id="ops-failed">{{ status.failed }}</td></tr>
+    <tr><td class="muted">Skipped</td><td id="ops-skipped">{{ status.skipped }}</td></tr>
+    <tr><td class="muted">Current Incident</td><td class="mono" id="ops-current">{{ status.current_incident or '(idle)' }}</td></tr>
+    <tr><td class="muted">Pending Approvals</td><td id="ops-pending">{{ status.pending_approvals }}</td></tr>
+    <tr><td class="muted">Poll Interval</td><td>{{ status.poll_interval }}s</td></tr>
+    <tr><td class="muted">Started At</td><td class="mono">{{ status.started_at or '-' }}</td></tr>
+    <tr><td class="muted">Last Cycle</td><td class="mono" id="ops-last-cycle">{{ status.last_cycle_at or '-' }}</td></tr>
+  </table>
+
+  <div class="controls-panel" style="margin-top: 1rem;">
+    <form method="post" action="/console/operations/start" style="display:inline">
+      <button type="submit" class="btn btn-primary">Start Loop</button>
+    </form>
+    <form method="post" action="/console/operations/stop" style="display:inline">
+      <button type="submit" class="btn btn-secondary">Stop Loop</button>
+    </form>
+    <form method="post" action="/console/operations/cycle" style="display:inline">
+      <button type="submit" class="btn btn-secondary">Run One Cycle</button>
+    </form>
+    <label class="toggle-label">
+      <input type="checkbox" id="auto-refresh" checked> Auto-refresh (10s)
+    </label>
+  </div>
+</div>
+
+{% if status.errors %}
+<div class="card">
+  <h3>Recent Errors</h3>
+  <ul>
+    {% for err in status.errors %}
+    <li class="mono">{{ err }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card" id="ops-approvals">
+  <h3>Approval Queue ({{ approvals|length }})</h3>
+  {% if approvals %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Incident</th>
+        <th>Action</th>
+        <th>Status</th>
+        <th>Reason</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in approvals %}
+      <tr>
+        <td class="mono">{{ req.id }}</td>
+        <td><a href="/incidents/{{ req.incident_id }}/console">{{ req.incident_id[:12] }}</a></td>
+        <td>{{ req.action }}</td>
+        <td><span class="badge badge-{{ req.status }}">{{ req.status }}</span></td>
+        <td>{{ req.reason }}</td>
+        <td>
+          {% if req.status == 'PENDING' %}
+          <form method="post" action="/console/operations/approvals/{{ req.id }}/approve" style="display:inline">
+            <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+          </form>
+          <form method="post" action="/console/operations/approvals/{{ req.id }}/deny" style="display:inline">
+            <button type="submit" class="btn btn-secondary btn-sm">Deny</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No approval requests.</p>
+  {% endif %}
+</div>
+
+<script>
+(function() {
+  const cb = document.getElementById('auto-refresh');
+  let timer = null;
+  function refresh() {
+    fetch('/operations/status').then(r => r.json()).then(s => {
+      document.getElementById('ops-processed').textContent = s.processed;
+      document.getElementById('ops-failed').textContent = s.failed;
+      document.getElementById('ops-skipped').textContent = s.skipped;
+      document.getElementById('ops-current').textContent = s.current_incident || '(idle)';
+      document.getElementById('ops-pending').textContent = s.pending_approvals;
+      if (s.last_cycle_at) document.getElementById('ops-last-cycle').textContent = s.last_cycle_at;
+    }).catch(() => {});
+    fetch('/operations/approvals').then(r => r.json()).then(d => {
+      document.getElementById('ops-approvals').querySelector('h3').textContent = 'Approval Queue (' + d.total + ')';
+    }).catch(() => {});
+  }
+  cb.addEventListener('change', function() {
+    if (cb.checked) { timer = setInterval(refresh, 10000); }
+    else { clearInterval(timer); }
+  });
+  if (cb.checked) timer = setInterval(refresh, 10000);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Controls — Aegis{% endblock %}
+{% block content %}
+<h2>Emergency Controls</h2>
+<p class="muted">LLM-independent operator switches. These operate without the AI pipeline.</p>
+
+<div class="card">
+  <h3>Global State</h3>
+  <table>
+    <tr>
+      <td class="muted">Paused</td>
+      <td><span class="badge badge-{{ 'authorized' if controls.paused else 'new' }}">{{ controls.paused }}</span></td>
+    </tr>
+    <tr>
+      <td class="muted">Safe Mode</td>
+      <td><span class="badge badge-{{ 'critical' if controls.safe_mode else 'new' }}">{{ controls.safe_mode }}</span></td>
+    </tr>
+    <tr>
+      <td class="muted">Require Approval All</td>
+      <td><span class="badge badge-{{ 'high' if controls.require_approval_all else 'new' }}">{{ controls.require_approval_all }}</span></td>
+    </tr>
+    <tr>
+      <td class="muted">Disabled Agents</td>
+      <td class="mono">{{ controls.disabled_agents|join(', ') or '(none)' }}</td>
+    </tr>
+    <tr>
+      <td class="muted">Revoked Tools</td>
+      <td class="mono">{{ controls.revoked_tools|join(', ') or '(none)' }}</td>
+    </tr>
+    <tr>
+      <td class="muted">Cancelled Incidents</td>
+      <td class="mono">{{ controls.cancelled_incidents|join(', ') or '(none)' }}</td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Toggle Controls</h3>
+  <div class="controls-grid">
+    <form method="post" action="/console/controls/toggle/pause">
+      {% if controls.paused %}
+      <button type="submit" class="btn btn-primary">Resume</button>
+      {% else %}
+      <button type="submit" class="btn btn-danger">Pause</button>
+      {% endif %}
+    </form>
+
+    <form method="post" action="/console/controls/toggle/safe_mode">
+      {% if controls.safe_mode %}
+      <button type="submit" class="btn btn-primary">Exit Safe Mode</button>
+      {% else %}
+      <button type="submit" class="btn btn-danger">Enter Safe Mode</button>
+      {% endif %}
+    </form>
+
+    <form method="post" action="/console/controls/toggle/approval_all">
+      {% if controls.require_approval_all %}
+      <button type="submit" class="btn btn-primary">Disable Require Approval</button>
+      {% else %}
+      <button type="submit" class="btn btn-danger">Enable Require Approval</button>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Disable Agent</h3>
+  <form method="post" action="/console/controls/agent/disable" class="inline-form">
+    <select name="agent_id" class="select">
+      <option value="A1">A1 — Triage</option>
+      <option value="A2">A2 — Evidence</option>
+      <option value="A3">A3 — Correlation</option>
+      <option value="A4">A4 — ATT&CK Mapping</option>
+      <option value="A5">A5 — Recommendations</option>
+    </select>
+    <button type="submit" class="btn btn-danger">Disable</button>
+  </form>
+
+  <h3>Enable Agent</h3>
+  <form method="post" action="/console/controls/agent/enable" class="inline-form">
+    <select name="agent_id" class="select">
+      <option value="A1">A1 — Triage</option>
+      <option value="A2">A2 — Evidence</option>
+      <option value="A3">A3 — Correlation</option>
+      <option value="A4">A4 — ATT&CK Mapping</option>
+      <option value="A5">A5 — Recommendations</option>
+    </select>
+    <button type="submit" class="btn btn-primary">Enable</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Revoke / Restore Tool</h3>
+  <form method="post" action="/console/controls/tool/revoke" class="inline-form">
+    <input type="text" name="tool_name" placeholder="tool name" class="input" required>
+    <button type="submit" class="btn btn-danger">Revoke</button>
+  </form>
+
+  <form method="post" action="/console/controls/tool/restore" class="inline-form" style="margin-top: 0.5rem;">
+    <input type="text" name="tool_name" placeholder="tool name" class="input" required>
+    <button type="submit" class="btn btn-primary">Restore</button>
+  </form>
+</div>
+{% endblock %}
