@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt "ruff==0.16.6"
       - name: Lint (ruff)
         run: ruff check src tests scripts
       - name: Unit tests (offline suite; integration tests are VM-gated)
