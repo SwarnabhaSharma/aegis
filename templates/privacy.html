@@ -18,6 +18,28 @@
 </div>
 
 <div class="card">
+  <h3>Data Handling per Agent Run</h3>
+  {% if records.get('agentrun') %}
+  <table>
+    <thead><tr><th>Agent</th><th>Requested</th><th>Released</th><th>Withheld</th></tr></thead>
+    <tbody>
+      {% for r in records.agentrun %}
+      <tr>
+        <td class="mono">{{ r.get('agent', '?') }}</td>
+        <td>{{ r.get('data_requested', '—') }}</td>
+        <td class="mono">{{ r.get('data_released', [])|join(', ') or '—' }}</td>
+        <td class="mono">{{ r.get('data_withheld', [])|join(', ') or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Pre-P3a runs show — (fields not recorded then). Full audit in <span class="mono">privacy_redaction / privacy_withheld</span> events.</p>
+  {% else %}
+  {{ ui.empty_state('No agent runs recorded.') }}
+  {% endif %}
+</div>
+
+<div class="card">
   <h3>Data Access Log</h3>
   {% if evidence %}
   <table>

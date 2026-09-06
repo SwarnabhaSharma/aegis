@@ -193,14 +193,14 @@
 
 <div class="card">
   <h3>Replay ({{ replay|length }})</h3>
-  <p class="muted">Merged timeline + transitions + approvals. Policy/verification carry no timestamps, shown in own cards.</p>
+  <p class="muted">Timeline + transitions + approvals + policy + execution + verification. Pre-P3a rows show unknown time.</p>
   {% if replay %}
   <table>
     <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th><th>Kind</th></tr></thead>
     <tbody>
       {% for t in replay %}
       <tr>
-        <td class="mono">{{ t.ts }}</td>
+        <td class="mono">{{ t.ts or 'unknown time' }}</td>
         <td class="mono">{{ t.get('actor', '-') }}</td>
         <td>{{ t.get('action', '-') }}</td>
         <td>{{ t.get('detail', '-') }}</td>

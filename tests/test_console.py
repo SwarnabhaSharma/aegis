@@ -64,6 +64,23 @@ def test_replay_merged_shape(client):
     assert isinstance(d["replay"], list)
 
 
+def test_p3a_stamped_records_merge(client):
+    """P3a: writers stamp ts + data fields; replay merges all five kinds."""
+    import aegis.slice as sl
+
+    c, app = client
+    st = app.state.store
+    inc = _seed_incidents(st)[0]
+    res = sl.investigate(st, inc, sl.FakeLLM())
+    assert res["ok"]
+    pol = st.records(inc, "policy")
+    assert pol and pol[0].get("timestamp")
+    runs = st.records(inc, "agentrun")
+    assert runs and runs[0].get("data_requested")
+    kinds = {i["kind"] for i in c.get(f"/incidents/{inc}/replay").json()["replay"]}
+    assert {"timeline", "transition", "policy"} <= kinds
+
+
 def test_agents_activity_empty(client):
     c, _ = client
     r = c.get("/api/agents/activity")

@@ -192,10 +192,10 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
 
     @app.get("/incidents/{incident_id}/replay")
     def get_replay(incident_id: str):
-        """Phase4: merged chronology (timeline + transitions + approvals).
+        """P3a: merged chronology over all timestamped records.
 
-        Policy/verification records carry no timestamps, so they stay in
-        their own cards; untimestamped entries noted via `partial: true`.
+        Pre-P3a history lacks timestamps on some kinds; those sort last
+        with empty ts ("unknown time" in UI). `partial` flags the mix.
         """
         inc = _get(incident_id)
         items = []
@@ -216,20 +216,38 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                               "detail": v.get("reason", ""), "kind": "transition"})
         except Exception:
             pass
-        try:
-            for a in st.records(incident_id, "approval") or []:
-                items.append({"ts": str(a.get("timestamp", "")),
-                              "actor": a.get("actor", "operator"),
-                              "action": f"approval:{a.get('decision', '?')}",
-                              "detail": a.get("from_state", ""), "kind": "approval"})
-        except Exception:
-            pass
-        items.sort(key=lambda x: x["ts"])
+        for kind, fmt in (
+            ("approval", lambda a: (str(a.get("timestamp", "")),
+                                    a.get("actor", "operator"),
+                                    f"approval:{a.get('decision', '?')}",
+                                    a.get("from_state", ""))),
+            ("policy", lambda p: (str(p.get("timestamp", "")),
+                                  "policy_engine",
+                                  f"policy:{p.get('decision', '?')} {p.get('action', '?')}",
+                                  p.get("reason", ""))),
+            ("response_action", lambda r: (str(r.get("timestamp", "")),
+                                           r.get("actor", "D1"),
+                                           f"execute:{r.get('action', '?')}",
+                                           r.get("target", ""))),
+            ("verification", lambda v: (str(v.get("timestamp", "")),
+                                        "verifier",
+                                        f"verify:{v.get('action', '?')}",
+                                        f"{v.get('actual', '?')} "
+                                        f"({'PASS' if v.get('passed') else 'FAIL'})")),
+        ):
+            try:
+                for doc in st.records(incident_id, kind) or []:
+                    ts, actor, action, detail = fmt(doc)
+                    items.append({"ts": ts, "actor": actor, "action": action,
+                                  "detail": detail, "kind": kind})
+            except Exception:
+                pass
+        items.sort(key=lambda x: (x["ts"] == "", x["ts"]))
         state = inc.state.value
         return {"incident_id": incident_id, "state": state,
                 "stages": STAGES, "stage_index": STAGE_OF.get(state),
                 "replay": items,
-                "partial": True}
+                "partial": any(not i["ts"] for i in items)}
 
     @app.post("/incidents/{incident_id}/investigate", tags=["pipeline"])
     def investigate(incident_id: str):
@@ -733,7 +751,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         records = {kind: st.records(incident_id, kind)
                    for kind in ("agentrun", "toolcall", "policy",
                                 "verification", "manifest", "attack_mapping",
-                                "approval")}
+                                "approval", "response_action")}
         replay = []
         for t in timeline:
             replay.append({"ts": t.get("ts", ""), "actor": t.get("actor", "-"),
@@ -743,12 +761,30 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             replay.append({"ts": t.get("ts", ""), "actor": t.get("actor", "-"),
                            "action": f"{t['from_state']} → {t['to_state']}",
                            "detail": t.get("reason", ""), "kind": "transition"})
-        for a in records.get("approval") or []:
-            replay.append({"ts": str(a.get("timestamp", ""))[:19],
-                           "actor": a.get("actor", "operator"),
-                           "action": f"approval:{a.get('decision', '?')}",
-                           "detail": a.get("from_state", ""), "kind": "approval"})
-        replay.sort(key=lambda x: x["ts"])
+        for kind, fmt in (
+            ("approval", lambda a: (str(a.get("timestamp", ""))[:19],
+                                    a.get("actor", "operator"),
+                                    f"approval:{a.get('decision', '?')}",
+                                    a.get("from_state", ""))),
+            ("policy", lambda p: (str(p.get("timestamp", ""))[:19],
+                                  "policy_engine",
+                                  f"policy:{p.get('decision', '?')} {p.get('action', '?')}",
+                                  p.get("reason", ""))),
+            ("response_action", lambda r: (str(r.get("timestamp", ""))[:19],
+                                           r.get("actor", "D1"),
+                                           f"execute:{r.get('action', '?')}",
+                                           r.get("target", ""))),
+            ("verification", lambda v: (str(v.get("timestamp", ""))[:19],
+                                        "verifier",
+                                        f"verify:{v.get('action', '?')}",
+                                        f"{v.get('actual', '?')} "
+                                        f"({'PASS' if v.get('passed') else 'FAIL'})")),
+        ):
+            for doc in records.get(kind) or []:
+                ts, actor, action, detail = fmt(doc)
+                replay.append({"ts": ts, "actor": actor, "action": action,
+                               "detail": detail, "kind": kind})
+        replay.sort(key=lambda x: (x["ts"] == "", x["ts"]))
         return templates.TemplateResponse(
             request, "incident.html", {"incident": inc_d,
                                        "timeline": timeline, "evidence": evidence,

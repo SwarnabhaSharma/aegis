@@ -219,7 +219,13 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
                          data_withheld=["privacy-redacted fields (see "
                                         "privacy_redaction events)"],
                          **audit_fields)
-        store.add_record("agentrun", inc_id, {"agent": s.agent, **audit_fields})
+        store.add_record("agentrun", inc_id, {
+            "agent": s.agent, **audit_fields,
+            "data_requested": "incident context + observations",
+            "data_released": evidence_ids_released,
+            "data_withheld": ["privacy-redacted fields (see "
+                              "privacy_redaction events)"],
+        })
     for c in getattr(registry, "calls", []) or []:
         if audit is not None:
             audit.record("tool_call", inc_id, actor=c["agent"],
@@ -315,6 +321,7 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     store.add_record("policy", inc_id, {
         "action": decision.action, "decision": decision.decision.value,
         "reason": decision.reason, "policy_version": decision.policy_version,
+        "timestamp": datetime.now(UTC).isoformat(),
     })
     manifest = version_manifest(
         model=getattr(llm, "model_tag", "fake"),
@@ -396,6 +403,7 @@ def execute_and_verify(store, inc_id: str, host: str,
         store.add_record("verification", inc_id, {
             "action": v.action, "target": v.target, "expected": v.expected,
             "actual": v.actual, "passed": v.passed,
+            "timestamp": datetime.now(UTC).isoformat(),
         })
         nxt = vf.next_state(v)
         if not v.passed:
