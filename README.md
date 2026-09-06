@@ -14,6 +14,10 @@ Local-first, no cloud dependencies. Runs on a single laptop with a 9B model.
 
 Measured on the bundled eval corpus with a 9B local model:
 precision 1.0, recall 1.0, 0 unsafe actions ([report](evals/report-real-20260823-060037.md)).
+Remeasure before quoting: those runs predate prompt v2 and the sampling-temperature
+knob below — live runs on Ornith-1.0 turboquant need `LLM_TEMPERATURE=0.6`.
+Live-verified 2026-09-06: real model + real winlogbeat telemetry + ES store →
+`RESOLVED`, A1–A5 ok, 200 evidence items ([demo](docs/demo-scenario.md)).
 
 ## Architecture
 
@@ -57,8 +61,11 @@ python scripts\run_slice.py --llm real --telemetry real --host <your-hostname>
 # durable mode: incidents persisted to Elasticsearch (visible in Kibana)
 $env:AEGIS_STORE="es"; python scripts\run_slice.py --llm fake
 
+# real host telemetry (winlogbeat index) instead of canned data
+$env:ES_TELEMETRY_INDEX="winlogbeat-*"; python scripts\run_slice.py --llm real --telemetry real --host <your-hostname>
+
 # API
-uvicorn aegis.api:app --port 8099     # Swagger at /docs
+uvicorn aegis.api:app --port 8099     # console at /dashboard, Swagger at /docs
 
 # evaluation
 python scripts\run_eval.py --llm real
@@ -80,6 +87,10 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 | `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server |
 | `LLM_TEMPERATURE` | `0.0` | Sampling temp; `0.5`–`0.6` on Ornith-1.0 turboquant (temp-0 greedy emits bad JSON) |
 | `LLM_MODEL` | — | Model id/path (recorded in per-incident manifest) |
+| `TI_PROVIDERS` | `local` | TI fan-out, e.g. `local,abuseipdb,virustotal,otx` (+ `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `NVD_API_KEY`) |
+| `ES_TELEMETRY_INDEX` | canned synthetic index | telemetry source (`winlogbeat-*` for a real host) |
+| `ES_ALERT_INDEX` | `aegis-dev-alerts` | index polled for new alerts |
+| `AEGIS_API_KEY` | empty (= open in dev) | gates API (401) and console (403 page) when set |
 | `AEGIS_STORE` | memory | `es` = persist incidents/steps/audit to ES |
 | `AEGIS_SAFE_MODE` | off | pause autonomy + force approvals |
 | `AEGIS_REQUIRE_APPROVAL` | off | human gate on every action |
@@ -93,11 +104,19 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 | `POST /incidents` | ingest alert |
 | `GET /incidents/{id}` · `/timeline` · `/evidence` | inspect |
 | `POST /incidents/{id}/investigate` | run agent pipeline + policy |
+| `GET /incidents?q=&sort=&page=` | queue search/sort/pagination |
+| `GET /incidents/{id}/replay` | merged chronology (timeline + policy + execution + verification) |
+| `GET /api/overview` · `/api/agents/activity` | dashboard stats · global agent feed |
 | `POST /incidents/{id}/approve` | operator authorization gate |
 | `GET /controls` · `POST /controls/{action}` | emergency controls (pause/safe-mode/disable/revoke) |
 | `POST /operations/start` · `/stop` · `/status` | autonomous operations loop |
 | `GET /operations/approvals` · `POST .../approve` · `.../deny` | approval queue |
-| `GET /dashboard` · `/console/operations` · `/console/controls` | console UI |
+| `GET /dashboard` · `/` · `/console/agents` | overview · queue · agent activity |
+| `GET /incidents/{id}/console` · `/privacy` · `/response` | detail + phase stepper · data-access log · response chain |
+| `GET /console/operations` · `/console/controls` · `/console/audit` | loop + approvals · emergency switches · filterable audit |
+
+Console tour and screen-by-screen demo: [docs/demo-scenario.md](docs/demo-scenario.md)
+· UI design record: [docs/ui-plan.md](docs/ui-plan.md).
 
 ## Safety model
 
@@ -125,7 +144,10 @@ model fabricates evidence references routinely; the validator strips them.
 
 - Simulated executor/verifier backends (ADR-013): isolation state is
   in-memory; contract matches a real EDR backend swap.
-- Console UI: Jinja2 templates with dark theme. Dashboard, incidents,
-  operations, controls, audit, and Swagger API docs.
+- Console UI: Jinja2 server-rendered, no build step (ADR-008). No threat map,
+  no global search, no ad-hoc query console — deferred, see [ui-plan](docs/ui-plan.md).
+  API/telemetry strings render via `textContent` only (no `innerHTML` sinks).
+- Console + API require `AEGIS_API_KEY` when set (403 page / 401 JSON);
+  open in dev without it.
 - Detection quality depends on the local model — measure with your own
   model via `run_eval.py`, do not assume these numbers transfer.
