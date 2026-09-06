@@ -13,7 +13,6 @@ es_lib = pytest.importorskip("elasticsearch")
 from aegis.incidents.es_store import ElasticsearchStore  # noqa: E402
 from aegis.incidents.evidence import Evidence, TimelineEntry  # noqa: E402
 from aegis.incidents.schema import IncidentState  # noqa: E402
-from aegis.infrastructure import get_es_client  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("AEGIS_INTEGRATION") != "1",
@@ -102,6 +101,8 @@ def test_transitions_evidence_timeline_ordering(store):
 def test_add_record_coerces_unserializable():
     """Live-ES: toolcall docs carrying raw objects must persist (#live-0906)."""
     import datetime
+
+    from aegis.infrastructure import get_es_client  # noqa: E402
 
     client = get_es_client()
     prefix = f"aegis-test-{uuid.uuid4().hex[:8]}"
