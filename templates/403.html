@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Restricted — Aegis{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Restricted (403)</h2>
+    <p class="muted" style="margin:4px 0 0;">This console requires an API key. No incident data is shown.</p>
+  </div>
+</div>
+<div class="state-error" role="alert">
+  <p>Missing or invalid <span class="mono">X-API-Key</span> header.</p>
+  <p class="muted">API clients: send the configured key. Browser: this deployment gates the console too — obtain a key from the operator.</p>
+  <p><a class="btn btn-secondary btn-sm" href="/health">Check service status</a></p>
+</div>
+{% endblock %}

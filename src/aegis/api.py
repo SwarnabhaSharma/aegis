@@ -58,31 +58,40 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         response.headers["X-Request-ID"] = request_id
         return response
 
-    # §17 API key auth: skip for console UI (HTML) and health endpoints
+    # §17 API key auth: health/docs/static stay open; everything else
+    # (JSON API and console HTML) requires the key when one is configured.
     # ponytail: in dev (aegis_env == "dev") and empty key, auth is disabled.
     # In prod, require a key — fail closed.
+    _templates_early = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+
+    def _is_console_path(path: str) -> bool:
+        return (path in {"/", "/dashboard", "/console/operations",
+                         "/console/controls", "/console/audit",
+                         "/console/agents"}
+                or path.startswith("/incidents/"))
+
     if settings.aegis_api_key or settings.aegis_env == "dev":
         class AuthMiddleware(BaseHTTPMiddleware):
             SKIP_PATHS = {"/health", "/ready", "/docs", "/openapi.json"}
-            # Exact paths that skip auth (console HTML pages only)
-            SKIP_CONSOLE = {"/console/audit"}
 
             async def dispatch(self, request: Request, call_next):
+                from fastapi.responses import JSONResponse
+
                 path = request.url.path
-                if (path in self.SKIP_PATHS
-                        or path.startswith("/static")
-                        or path in self.SKIP_CONSOLE
-                        or path.startswith("/incidents/") and path.endswith("/console")
-                        or path.startswith("/incidents/") and "/console/" in path):
+                if path in self.SKIP_PATHS or path.startswith("/static"):
                     return await call_next(request)
                 if not settings.aegis_api_key:
                     return await call_next(request)
-                key = request.headers.get("X-API-Key", "")
-                if key != settings.aegis_api_key:
-                    from fastapi.responses import JSONResponse
-                    return JSONResponse({"detail": "invalid or missing API key"},
-                                        status_code=401)
-                return await call_next(request)
+                if request.headers.get("X-API-Key", "") == settings.aegis_api_key:
+                    return await call_next(request)
+                # P2: permission failure is explicit; browsers get the 403
+                # page (no incident data leaks), API clients get JSON.
+                if (_is_console_path(path)
+                        or "text/html" in request.headers.get("accept", "")):
+                    return _templates_early.TemplateResponse(
+                        request, "403.html", {}, status_code=403)
+                return JSONResponse({"detail": "invalid or missing API key"},
+                                    status_code=401)
 
         app.add_middleware(AuthMiddleware)
 

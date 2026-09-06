@@ -242,3 +242,27 @@ def test_operations_console_approve_deny(client):
     r = c.post(f"/console/operations/approvals/{req.id}/approve",
                follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_console_auth_gates_html_and_json(client):
+    """P2: with a key configured, console renders 403 page, API gets 401."""
+    from aegis.config import get_settings
+
+    settings = get_settings()
+    old = settings.aegis_api_key
+    settings.aegis_api_key = "test-key"
+    try:
+        c, app = client
+        ids = _seed_incidents(app.state.store)
+        r = c.get("/dashboard")
+        assert r.status_code == 403
+        assert "Restricted" in r.text
+        assert ids[0] not in r.text  # no incident data leaks
+        r = c.get("/incidents")
+        assert r.status_code == 401
+        r = c.get("/dashboard", headers={"X-API-Key": "test-key"})
+        assert r.status_code == 200
+        r = c.get("/health")
+        assert r.status_code == 200
+    finally:
+        settings.aegis_api_key = old
