@@ -146,8 +146,16 @@
           if (!node) return;
           detailDiv.style.display = '';
           detailTitle.textContent = node.group + ': ' + node.label;
-          detailKv.innerHTML = '<dt>ID</dt><dd class="mono">' + node.id + '</dd>' +
-                               '<dt>Type</dt><dd>' + node.group + '</dd>';
+          detailKv.replaceChildren();
+          [['ID', node.id], ['Type', node.group]].forEach(function(pair) {
+            var dt = document.createElement('dt');
+            dt.textContent = pair[0];
+            var dd = document.createElement('dd');
+            dd.className = 'mono';
+            dd.textContent = pair[1];
+            detailKv.appendChild(dt);
+            detailKv.appendChild(dd);
+          });
           if (node.group === 'evidence') {
             detailLink.href = '/incidents/{{ incident_id }}/console#evidence';
             detailLink.style.display = '';

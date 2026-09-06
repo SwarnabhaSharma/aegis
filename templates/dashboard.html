@@ -109,6 +109,17 @@
 </div>
 
 <script>
+// XSS guard: API/telemetry strings reach textContent only, never innerHTML.
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = text;
+  return n;
+}
+function emptyPara(msg) {
+  var p = el('p', 'empty'); p.textContent = msg; p.setAttribute('role', 'status');
+  return p;
+}
 fetch('/api/overview').then(function(r){return r.json()}).then(function(d){
   document.getElementById('m-active').textContent = d.active;
   document.getElementById('m-new').textContent = '+' + d.new_24h + ' last 24h';
@@ -119,17 +130,39 @@ fetch('/api/overview').then(function(r){return r.json()}).then(function(d){
   document.getElementById('m-ti').textContent = d.threats_enriched;
   document.getElementById('ti-lookups').textContent = d.ti_lookups;
   document.getElementById('ti-mappings').textContent = d.attack_mappings;
-  var max = Math.max.apply(null, d.top_assets.map(function(a){return a.count}).concat([1]));
-  document.getElementById('top-assets').innerHTML = d.top_assets.length ? d.top_assets.map(function(a){
-    return '<div class="severity-bar"><span class="severity-label mono">' + a.host + '</span><div class="severity-track"><div class="severity-fill severity-high" style="width:' + Math.round(a.count/max*100) + '%"></div></div><span class="severity-count">' + a.count + '</span></div>';
-  }).join('') : '<p class="empty">No asset data yet.</p>';
+  var max = Math.max.apply(null, d.top_assets.map(function(a){return Number(a.count) || 0}).concat([1]));
+  var assets = document.getElementById('top-assets');
+  assets.replaceChildren();
+  if (!d.top_assets.length) { assets.appendChild(emptyPara('No asset data yet.')); }
+  d.top_assets.forEach(function(a){
+    var row = el('div', 'severity-bar');
+    row.appendChild(el('span', 'severity-label mono', String(a.host)));
+    var track = el('div', 'severity-track');
+    var fill = el('div', 'severity-fill severity-high');
+    fill.style.width = Math.round((Number(a.count) || 0)/max*100) + '%';
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el('span', 'severity-count', String(Number(a.count) || 0)));
+    assets.appendChild(row);
+  });
   var feed = document.getElementById('agent-feed');
   document.getElementById('agent-count').textContent = d.agent_feed.length ? '(' + d.agent_feed.length + ')' : '';
-  feed.innerHTML = d.agent_feed.length ? d.agent_feed.slice(0,5).map(function(a){
-    return '<div style="padding:6px 0;border-bottom:1px solid var(--border);"><span class="mono">' + a.agent + '</span> <span class="muted">· ' + a.incident_id.slice(0,12) + '</span><br><span class="muted">' + (a.ok ? 'completed' : (a.error || 'failed')) + (a.degraded ? ' (degraded)' : '') + '</span></div>';
-  }).join('') : '<p class="empty">No agent runs yet. Run an investigation first.</p>';
+  feed.replaceChildren();
+  if (!d.agent_feed.length) { feed.appendChild(emptyPara('No agent runs yet. Run an investigation first.')); }
+  d.agent_feed.slice(0,5).forEach(function(a){
+    var row = el('div', '');
+    row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border);';
+    row.appendChild(el('span', 'mono', String(a.agent)));
+    row.appendChild(el('span', 'muted', ' · ' + String(a.incident_id).slice(0,12)));
+    row.appendChild(el('br', ''));
+    row.appendChild(el('span', 'muted', (a.ok ? 'completed' : (a.error || 'failed')) + (a.degraded ? ' (degraded)' : '')));
+    feed.appendChild(row);
+  });
   var sys = document.getElementById('sys-status');
-  sys.innerHTML = '<span class="badge badge-' + (d.loop_running ? 'authorized' : 'failed') + '">' + (d.loop_running ? 'Running' : 'Stopped') + '</span> <span class="muted">' + d.pending_approvals + ' pending approvals</span>' + (d.skipped ? ' <span class="muted">· ' + d.skipped + ' skipped (partial data)</span>' : '');
+  sys.replaceChildren();
+  sys.appendChild(el('span', 'badge badge-' + (d.loop_running ? 'authorized' : 'failed'), d.loop_running ? 'Running' : 'Stopped'));
+  sys.appendChild(el('span', 'muted', ' ' + d.pending_approvals + ' pending approvals'));
+  if (d.skipped) sys.appendChild(el('span', 'muted', ' · ' + d.skipped + ' skipped (partial data)'));
   var days = Object.keys(d.trend7);
   var totals = days.map(function(k){return d.trend7[k].total});
   var highs = days.map(function(k){return d.trend7[k].high});
@@ -138,8 +171,18 @@ fetch('/api/overview').then(function(r){return r.json()}).then(function(d){
   new Chart(document.getElementById('typeDonut'),{type:'doughnut',data:{labels:tl,datasets:[{data:td,backgroundColor:['#f87171','#fb923c','#fbbf24','#4a9eff','#c4b5fd','#8b95a7'],borderColor:'#1a1d24',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:'#e4e6eb',font:{size:12}}}}}});
 }).catch(function(e){
   document.getElementById('live-badge').textContent = 'offline';
-  document.getElementById('overview-error').innerHTML = '<div class="state-error" role="alert">Live stats unavailable (' + e.message + '). Showing server-rendered data. <a href="/dashboard">Retry</a></div>';
-  document.getElementById('agent-feed').innerHTML = '<p class="empty">Live feed unavailable.</p>';
+  var err = document.getElementById('overview-error');
+  err.replaceChildren();
+  var box = el('div', 'state-error');
+  box.setAttribute('role', 'alert');
+  box.appendChild(el('span', '', 'Live stats unavailable (' + e.message + '). Showing server-rendered data. '));
+  var retry = el('a', '', 'Retry');
+  retry.href = '/dashboard';
+  box.appendChild(retry);
+  err.appendChild(box);
+  var feed = document.getElementById('agent-feed');
+  feed.replaceChildren();
+  feed.appendChild(emptyPara('Live feed unavailable.'));
 });
 </script>
 {% endblock %}

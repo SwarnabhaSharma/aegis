@@ -93,6 +93,17 @@ def test_privacy_log_and_audit_filter(client):
     assert r.status_code == 200
 
 
+def test_no_innerhtml_sinks():
+    """P0: API/telemetry strings must reach textContent, never innerHTML."""
+    import pathlib
+
+    for tpl in (pathlib.Path(__file__).resolve().parents[1] / "templates").glob("*.html"):
+        src = tpl.read_text(encoding="utf-8")
+        hits = [ln for ln in src.splitlines()
+                if "innerHTML" in ln and "textContent only" not in ln]
+        assert not hits, f"{tpl.name}: {hits}"
+
+
 def test_incidents_index_renders(client):
     c, app = client
     _seed_incidents(app.state.store)
