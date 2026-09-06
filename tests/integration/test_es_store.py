@@ -102,8 +102,8 @@ def test_add_record_coerces_unserializable():
     """Live-ES: toolcall docs carrying raw objects must persist (#live-0906)."""
     import datetime
 
-    from aegis.infrastructure import get_es_client
     from aegis.incidents.es_store import ElasticsearchStore as ESStore
+    from aegis.infrastructure import get_es_client
 
     client = get_es_client()
     prefix = f"aegis-test-{uuid.uuid4().hex[:8]}"
@@ -111,7 +111,7 @@ def test_add_record_coerces_unserializable():
     try:
         store.add_record("toolcall", "inc-test", {
             "tool": "get_process_tree", "agent": "A2", "ok": True,
-            "when": datetime.datetime(2026, 9, 6, tzinfo=datetime.timezone.utc),
+            "when": datetime.datetime(2026, 9, 6, tzinfo=datetime.UTC),
             "_raw_result": [{"object": object()}],
         })
         recs = store.records("inc-test", "toolcall")

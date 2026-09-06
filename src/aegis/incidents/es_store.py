@@ -7,8 +7,8 @@ update_state uses optimistic concurrency (if_seq_no/if_primary_term);
 conflict -> ValueError.
 """
 
-from datetime import UTC, datetime
 import json
+from datetime import UTC, datetime
 
 from elasticsearch import ConflictError, Elasticsearch, NotFoundError
 
