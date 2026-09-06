@@ -279,6 +279,12 @@ Indices: `incidents-*` ✅ · `incident-steps-*` ✅ (evidence/transition/timeli
 | Live-model fixes (2026-09-06) | ES `add_record` JSON-safe coercion (raw TelemetryEvent broke ES persist); registry kwarg strip to schema_in (LLM-invented query/index args); `get_host_details` client-side agg (no keyword subfields); slice privacy_withheld dup-kwarg pop; integration test_add_record_coerces_unserializable | 8, 10, 18 | **DONE 9deb906** — live run then hits model truncation (server n_predict), needs longer predict length |
 | Live-model RESOLVED (2026-09-06) | Ornith-1.0 + real telemetry + ES store → RESOLVED, A1-A5 ok, ALLOW isolate_host, verify passed; needed LLM_TEMPERATURE=0.6 (new knob, temp-0 greedy degenerates) + final-turn FINAL nudge (PROMPT_VERSION 2) + `_raw_result` strip in es_store | 7, 13, 21 | **DONE 9deb906** |
 | Live TI (2026-09-06) | TI_PROVIDERS=local,abuseipdb,virustotal,otx; 3 providers enabled; 185.220.101.4 → malicious via AbuseIPDB | 8 | **DONE 9deb906** |
+| Real-host run (2026-09-06) | winlogbeat+sysmon on SWARNABHASHARMA (1174 ev/15m); ES_TELEMETRY_INDEX=winlogbeat-* override; real model → RESOLVED, A1-A5 ok, evidence 200, ALLOW + verify passed | 27 | **DONE uncommitted** |
+| P0 XSS (2026-09-06) | textContent builders in dashboard + graph; template scan regression test | 15 | **DONE uncommitted** |
+| P1 queue dedup (2026-09-06) | _query_incidents + _paginate shared by API + console | 8 | **DONE uncommitted** |
+| P2 console auth (2026-09-06) | key enforced on HTML routes; 403 page leaks nothing; JSON keeps 401 | 17 | **DONE uncommitted** |
+| P3a record stamps (2026-09-06) | timestamp on policy/verification, data fields on agentrun; 5-kind replay; unknown-time sort for history | 14, 18 | **DONE 1a9c120** |
+| P4 docs (2026-09-06) | demo env matrix + docs/ui-plan.md transcribed reports | 30 | **DONE 744d744** |
 
 Deferred-by-decision (not backlog): executor realism (ADR-013), RAG (ADR-007), UI-Phase1 deferrals (§28: KQL/AI-chat, TI/Assets/Reports/Settings pages, fake metrics).
 
