@@ -1,7 +1,14 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Response — Incident {{ incident_id[:12] }} — Aegis{% endblock %}
 {% block content %}
-<h2>Response — <span class="mono">{{ incident_id[:16] }}</span></h2>
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Response <span class="mono muted">{{ incident_id[:16] }}</span></h2>
+    <p class="muted" style="margin:4px 0 0;">Recommendation → evidence → policy → approval → execution → verification.</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">{{ ui.sev(incident.severity) }}{{ ui.state_badge(incident.state) }}</div>
+</div>
 
 <div class="tabs">
   <a href="/incidents/{{ incident_id }}/console" class="tab">Detail</a>
@@ -11,75 +18,108 @@
 </div>
 
 <div class="card">
-  <h3>Incident Status</h3>
-  <dl class="kv">
-    <dt>Current state</dt><dd><span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></dd>
-    <dt>Severity</dt><dd><span class="badge badge-{{ incident.severity }}">{{ incident.severity }}</span></dd>
-    <dt>Host</dt><dd class="mono">{{ incident.fields.get('host', '-') }}</dd>
-  </dl>
-</div>
-
-{% if records.get('policy') %}
-<div class="card">
-  <h3>Policy Decision</h3>
+  <h3>1. Recommendation {{ ui.trust('assessment', 'aegis assessment') }}</h3>
+  {% if records.get('policy') %}
   {% for p in records.policy %}
   <dl class="kv">
     <dt>Action</dt><dd class="mono">{{ p.get('action', '?') }}</dd>
-    <dt>Decision</dt><dd><span class="badge badge-{{ p.get('decision', '').lower() }}">{{ p.get('decision', '?') }}</span></dd>
     <dt>Reason</dt><dd>{{ p.get('reason', '-') }}</dd>
     <dt>Policy version</dt><dd class="mono">{{ p.get('policy_version', '?') }}</dd>
   </dl>
   {% endfor %}
+  <p class="muted">A5 full recommendation text is not persisted (record holds status only). Policy action above is authoritative proxy.</p>
+  {% else %}
+  {{ ui.empty_state('No recommendation yet. Run an investigation first.') }}
+  {% endif %}
 </div>
-{% endif %}
 
-{% if records.get('attack_mapping') %}
 <div class="card">
-  <h3>Threat Analysis (ATT&CK)</h3>
-  {% for mapping in records.attack_mapping %}
-  <p class="muted">Data version: <span class="mono">{{ mapping.get('data_version', '?') }}</span></p>
+  <h3>2. Supporting Evidence {{ ui.trust('evidence', 'evidence') }}</h3>
+  {% if evidence %}
+  <p class="muted">{{ evidence|length }} items · confidence and provenance on Detail tab.</p>
   <table>
-    <thead><tr><th>Technique</th><th>Name</th><th>Confidence</th><th>Evidence IDs</th></tr></thead>
+    <thead><tr><th>ID</th><th>Source</th><th>Classification</th><th>Confidence</th></tr></thead>
+    <tbody>
+      {% for ev in evidence[:10] %}
+      <tr><td class="mono">{{ ev.id }}</td><td class="mono">{{ ev.get('source', '-') }}</td><td>{{ ev.get('classification', '-') }}</td><td>{{ "%.0f"|format(ev.get('confidence', 0) * 100) }}%</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if evidence|length > 10 %}<p class="muted">Showing 10 of {{ evidence|length }}. Full list on Detail.</p>{% endif %}
+  {% else %}
+  {{ ui.empty_state('No evidence collected.') }}
+  {% endif %}
+  {% if records.get('attack_mapping') %}
+  <h3>Assessment (ATT&amp;CK) {{ ui.trust('ti', 'threat intel') }}</h3>
+  {% for mapping in records.attack_mapping %}
+  <table>
+    <thead><tr><th>Technique</th><th>Confidence</th><th>Evidence IDs</th></tr></thead>
     <tbody>
       {% for t in mapping.get('techniques', []) %}
-      <tr>
-        <td class="mono">{{ t.id }}</td>
-        <td>{{ t.get('name', '-') }}</td>
-        <td>{{ "%.0f"|format(t.get('confidence', 0) * 100) }}%</td>
-        <td class="mono">{{ t.get('evidence_ids', [])|join(', ') }}</td>
-      </tr>
+      <tr><td class="mono">{{ t.id }}</td><td>{{ "%.0f"|format(t.get('confidence', 0) * 100) }}%</td><td class="mono">{{ t.get('evidence_ids', [])|join(', ') }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
   {% endfor %}
-</div>
-{% endif %}
-
-<div class="card">
-  <h3>Agent Recommendations</h3>
-  {% if records.get('agentrun') %}
-  <table>
-    <thead><tr><th>Agent</th><th>OK</th><th>Degraded</th><th>Error</th><th>LLM attempts</th></tr></thead>
-    <tbody>
-      {% for r in records.agentrun %}
-      <tr>
-        <td class="mono">{{ r.get('agent', '?') }}</td>
-        <td>{{ r.get('ok', '?') }}</td>
-        <td>{{ r.get('degraded', False) }}</td>
-        <td>{{ r.get('error', '-') }}</td>
-        <td>{{ r.get('llm_attempts', 1) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="empty">No agent runs recorded.</p>
   {% endif %}
 </div>
 
-{% if records.get('verification') %}
 <div class="card">
-  <h3>Verification</h3>
+  <h3>3. Policy Decision {{ ui.trust('policy', 'policy decision') }}</h3>
+  {% if records.get('policy') %}
+  {% for p in records.policy %}
+  <p><span class="badge badge-{{ p.get('decision', '').lower() }}">{{ p.get('decision', '?') }}</span> <span class="mono">{{ p.get('action', '?') }}</span></p>
+  <p class="muted">{{ p.get('reason', '-') }} · version <span class="mono">{{ p.get('policy_version', '?') }}</span></p>
+  {% endfor %}
+  {% else %}
+  {{ ui.empty_state('No policy decision recorded.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>4. Approval {{ ui.trust('human', 'human decision') }}</h3>
+  {% if incident.state == 'AWAITING_APPROVAL' %}
+  <p>Awaiting operator approval. Backend gate enforced; UI cannot bypass.</p>
+  <div style="display:flex;gap:8px;">
+    <form method="POST" action="/incidents/{{ incident_id }}/console/approve" style="display:inline;"><button type="submit" class="btn btn-primary" style="background:#2ecc71;border-color:#27ae60;">Approve</button></form>
+    <form method="POST" action="/incidents/{{ incident_id }}/console/deny" style="display:inline;"><button type="submit" class="btn btn-danger" style="background:#e74c3c;border-color:#c0392b;">Deny</button></form>
+  </div>
+  {% elif records.get('approval') %}
+  <table>
+    <thead><tr><th>Actor</th><th>Decision</th><th>Time</th><th>From</th></tr></thead>
+    <tbody>
+      {% for a in records.approval %}
+      <tr><td class="mono">{{ a.get('actor', '?') }}</td><td>{{ a.get('decision', '?') }}</td><td class="mono">{{ a.get('timestamp', '-') }}</td><td class="mono">{{ a.get('from_state', '-') }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif incident.state in ['AUTHORIZED','EXECUTING','VERIFYING','RESOLVED'] %}
+  <p><span class="badge badge-authorized">AUTHORIZED</span> Auto-allowed by policy. Execution pending or done.</p>
+  {% else %}
+  {{ ui.empty_state('No approval step reached.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>5. Execution {{ ui.trust('execution', 'execution result') }}</h3>
+  {% if records.get('response_action') %}
+  <table>
+    <thead><tr><th>Action</th><th>Target</th><th>Actor</th><th>Time</th></tr></thead>
+    <tbody>
+      {% for r in records.response_action %}
+      <tr><td class="mono">{{ r.get('action', '?') }}</td><td class="mono">{{ r.get('target', '?') }}</td><td class="mono">{{ r.get('actor', '?') }}</td><td class="mono">{{ r.get('timestamp', '-') }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Executor simulated per ADR-013. Contract matches real EDR swap.</p>
+  {% else %}
+  {{ ui.empty_state('Nothing executed yet.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>6. Verification {{ ui.trust('verification', 'verified') }}</h3>
+  {% if records.get('verification') %}
   <table>
     <thead><tr><th>Action</th><th>Target</th><th>Expected</th><th>Actual</th><th>Passed</th></tr></thead>
     <tbody>
@@ -94,24 +134,8 @@
       {% endfor %}
     </tbody>
   </table>
-</div>
-{% endif %}
-
-<div class="card">
-  <h3>Approval Status</h3>
-  {% if incident.state == 'awaiting_approval' %}
-  <p>Awaiting operator approval.</p>
-  <a href="/docs" class="btn" target="_blank">Approve via API →</a>
-  {% elif incident.state == 'resolved' %}
-  <p><span class="badge badge-resolved">RESOLVED</span> Incident remediated and verified.</p>
-  {% elif incident.state == 'authorized' %}
-  <p><span class="badge badge-authorized">AUTHORIZED</span> Auto-allowed by policy. Execution pending.</p>
-  {% elif incident.state == 'failed' %}
-  <p><span class="badge badge-failed">FAILED</span> Pipeline degraded. Human intervention required.</p>
-  {% elif incident.state == 'escalated' %}
-  <p><span class="badge badge-escalated">ESCALATED</span> Requires operator attention.</p>
   {% else %}
-  <p class="muted">Current state: <span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></p>
+  {{ ui.empty_state('No verification results yet.') }}
   {% endif %}
 </div>
 

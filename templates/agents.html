@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Agent Activity — Aegis{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Agent Activity</h2>
+    <p class="muted" style="margin:4px 0 0;">Operational transparency without private reasoning. Last {{ limit }} runs.</p>
+  </div>
+  <span class="trust trust-assessment">aegis assessment</span>
+</div>
+
+<div class="card">
+{% if activity %}
+<table>
+  <thead><tr><th>Agent</th><th>Role</th><th>Status</th><th>Incident</th><th>Host</th><th>Tools</th><th>Attempts</th><th>Result</th></tr></thead>
+  <tbody>
+    {% for a in activity %}
+    <tr>
+      <td class="mono">{{ a.agent }}</td>
+      <td>{{ a.role }}</td>
+      <td><span class="badge badge-{{ 'resolved' if a.status == 'completed' else ('awaiting_approval' if a.status == 'degraded' else 'failed') }}">{{ a.status }}</span></td>
+      <td><a class="mono" href="/incidents/{{ a.incident_id }}/console">{{ a.incident_id[:12] }}</a></td>
+      <td class="mono">{{ a.host }}</td>
+      <td class="mono muted">{{ a.tools|join(', ') or '—' }}</td>
+      <td>{{ a.llm_attempts }}</td>
+      <td class="muted">{{ a.error or ('ok' if a.ok else '—') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+{{ ui.empty_state('No agent runs yet. Run an investigation first.') }}
+{% endif %}
+</div>
+{% endblock %}

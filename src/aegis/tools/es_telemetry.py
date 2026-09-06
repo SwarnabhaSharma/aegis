@@ -105,27 +105,32 @@ class ElasticsearchTelemetry(TelemetrySource):
         )
 
     def get_host_details(self, host: str) -> dict:
+        # ponytail: client-side agg over sample; terms-aggs need keyword
+        # subfields the synthetic index lacks. Server aggs if mapping fixed.
         resp = self._es.search(index=self._index, body={
-            "size": 0,
+            "size": 200,
+            "sort": [{"@timestamp": {"order": "asc"}}],
             "query": {"match": {"host.name": host.lower()}},
-            "aggs": {
-                "first_seen": {"min": {"field": "@timestamp"}},
-                "last_seen": {"max": {"field": "@timestamp"}},
-                "channels": {"terms": {"field": "winlog.channel", "size": 20}},
-                "users": {"terms": {"field": "user.name", "size": 50}},
-            },
         })
-        aggs = resp.get("aggregations", {})
+        hits = resp.get("hits", {}).get("hits", [])
         total = resp.get("hits", {}).get("total", {})
         count = total.get("value", 0) if isinstance(total, dict) else int(total)
-        if not count:
+        if not hits and not count:
             return {"host": host, "seen": False}
+        channels, users, stamps = set(), set(), []
+        for h in hits:
+            src = h.get("_source", {})
+            channels.add(str(src.get("winlog", {}).get("channel", "")))
+            users.add(str(src.get("user", {}).get("name", "")))
+            stamps.append(str(src.get("@timestamp", "")))
+        channels.discard("")
+        users.discard("")
         return {
             "host": host,
             "seen": True,
             "event_count": count,
-            "first_seen": aggs.get("first_seen", {}).get("value_as_string", ""),
-            "last_seen": aggs.get("last_seen", {}).get("value_as_string", ""),
-            "channels": sorted(b["key"] for b in aggs.get("channels", {}).get("buckets", [])),
-            "users": sorted(b["key"] for b in aggs.get("users", {}).get("buckets", [])),
+            "first_seen": stamps[0] if stamps else "",
+            "last_seen": stamps[-1] if stamps else "",
+            "channels": sorted(channels),
+            "users": sorted(users),
         }

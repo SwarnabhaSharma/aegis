@@ -4,21 +4,47 @@
   <meta charset="UTF-8">
   <title>{% block title %}Aegis Console{% endblock %}</title>
   <link rel="stylesheet" href="/static/console.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <aside class="sidebar" aria-label="Primary">
       <h1>AEGIS</h1>
-      <nav>
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">Incidents</a>
-        <a href="/console/audit" class="{% if request.url.path == '/console/audit' %}active{% endif %}">Audit</a>
-        <a href="/docs" target="_blank">API</a>
+      <nav aria-label="Sections">
+        <a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}" {% if request.url.path == '/dashboard' %}aria-current="page"{% endif %}><span class="nav-icon">◈</span>Overview</a>
+        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}" {% if request.url.path == '/' %}aria-current="page"{% endif %}><span class="nav-icon">▲</span>Incidents</a>
+        <a href="/console/agents" class="{% if request.url.path == '/console/agents' %}active{% endif %}" {% if request.url.path == '/console/agents' %}aria-current="page"{% endif %}><span class="nav-icon">◐</span>Agent Activity</a>
+        <a href="/console/operations" class="{% if request.url.path == '/console/operations' %}active{% endif %}" {% if request.url.path == '/console/operations' %}aria-current="page"{% endif %}><span class="nav-icon">●</span>Operations</a>
+        <a href="/console/controls" class="{% if request.url.path == '/console/controls' %}active{% endif %}" {% if request.url.path == '/console/controls' %}aria-current="page"{% endif %}><span class="nav-icon">⬢</span>Controls</a>
+        <a href="/console/audit" class="{% if request.url.path == '/console/audit' %}active{% endif %}" {% if request.url.path == '/console/audit' %}aria-current="page"{% endif %}><span class="nav-icon">▤</span>Audit</a>
+        <a href="/docs" target="_blank" rel="noopener">API</a>
       </nav>
       {% block sidebar_incident %}{% endblock %}
     </aside>
-    <main class="main">
+    <main class="main" id="main" tabindex="-1" aria-label="Content">
+      <div class="toast-container" id="toasts"></div>
       {% block content %}{% endblock %}
     </main>
   </div>
+  <script>
+    function showToast(msg, type) {
+      type = type || 'info';
+      var c = document.getElementById('toasts');
+      var t = document.createElement('div');
+      t.className = 'toast toast-' + type;
+      t.textContent = msg;
+      c.appendChild(t);
+      setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.remove(); }, 300); }, 3000);
+    }
+    (function() {
+      var p = new URLSearchParams(window.location.search);
+      var toast = p.get('toast');
+      if (toast) showToast(toast, 'success');
+      var err = p.get('error');
+      if (err) showToast(err, 'error');
+      history.replaceState(null, '', window.location.pathname);
+    })();
+  </script>
 </body>
 </html>

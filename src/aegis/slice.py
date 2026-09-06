@@ -5,15 +5,18 @@ investigate(): TRIAGING -> RESPONSE_PLANNED -> policy decision
               intel seeding always on).
 run_full_slice(): investigate + simulated execute/verify tail (CLI/tests).
 """
-import os
 from dataclasses import replace
 from datetime import UTC, datetime
 
 from aegis.agents.pipeline import AgentPipeline
+from aegis.evidence_collector import collect_evidence
 from aegis.executor.executor import SimulatedExecutor
-from aegis.incidents.evidence import evidence_from_tool_result
 from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
+from aegis.infrastructure import build_registry as _build_registry
+from aegis.infrastructure import live_telemetry as _live_telemetry
+from aegis.infrastructure import make_store as _make_store
+from aegis.injection_detector import detect_and_record_injections
 from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
 from aegis.policies.engine import ASSET_CRITICALITY, Decision, evaluate
@@ -46,44 +49,12 @@ class FakeLLM(LLMClient):
 
 def make_store():
     """Store per AEGIS_STORE env (mirrors api.py). Returns (store, es|None)."""
-    if os.getenv("AEGIS_STORE") == "es":
-        from elasticsearch import Elasticsearch
-
-        from aegis.config import get_settings
-        from aegis.incidents.es_store import ElasticsearchStore
-
-        s = get_settings()
-        es = Elasticsearch(
-            s.es_host, basic_auth=(s.es_user, s.es_password),
-            verify_certs=s.es_verify_certs, request_timeout=60,
-        )
-        return ElasticsearchStore(es), es
-    from aegis.incidents.store import InMemoryStore
-
-    return InMemoryStore(), None
-
-
-def live_telemetry():
-    from elasticsearch import Elasticsearch
-
-    from aegis.config import get_settings
-    from aegis.tools.es_telemetry import ElasticsearchTelemetry
-
-    s = get_settings()
-    es = Elasticsearch(
-        s.es_host, basic_auth=(s.es_user, s.es_password),
-        verify_certs=s.es_verify_certs, request_timeout=60,
-    )
-
-    return es, ElasticsearchTelemetry(es)
+    return _make_store()
 
 
 def build_registry(controls=None):
     """Production read-tool registry backed by live winlogbeat telemetry."""
-    from aegis.tools.registry import build_read_tools
-
-    es, tel = live_telemetry()
-    return es, build_read_tools(tel, controls=controls)
+    return _build_registry(controls=controls)
 
 
 def _synthetic_events(host: str):
@@ -124,34 +95,6 @@ def _fmt_events(events, n=8) -> str:
     return "\n".join(rows) or "(no events)"
 
 
-def _detect_contradictions(evidence_records: list) -> None:
-    """§14: populate contradicts field when two records conflict on same entity."""
-    by_entity: dict[tuple, list] = {}
-    for ev in evidence_records:
-        data = ev.data
-        host = data.get("host", "")
-        entity_key = None
-        if data.get("process"):
-            entity_key = ("process", host, data["process"])
-        elif data.get("file_path"):
-            entity_key = ("file", host, data["file_path"])
-        if entity_key:
-            by_entity.setdefault(entity_key, []).append(ev)
-
-    for _entity_key, evs in by_entity.items():
-        if len(evs) < 2:
-            continue
-        actions = {}
-        for ev in evs:
-            action = ev.data.get("action", "")
-            actions.setdefault(action, []).append(ev)
-        if len(actions) > 1:
-            all_evs = [ev for group in actions.values() for ev in group]
-            ids = [ev.id for ev in all_evs]
-            for ev in all_evs:
-                ev.contradicts = [i for i in ids if i != ev.id]
-
-
 def investigate(store, inc_id: str, llm, registry=None, seed=None,
                 confidence_floor: float = 0.95,
                 audit=None, controls=None,
@@ -163,10 +106,12 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
     events: explicit TelemetryEvent list (eval corpus); overrides
             registry-prefetch / synthetic fallback.
     """
-    from aegis.agents.reasoning import PROMPT_VERSION, detect_injection, untrusted
+    from aegis.agents.reasoning import PROMPT_VERSION, untrusted
     from aegis.agents.validation import validate_attack_mapping, validate_evidence
     from aegis.audit import version_manifest
     from aegis.intel import attack as attack_intel
+    from aegis.intel.graph import cross_incident_ioc_edges
+    from aegis.intel.graph import serialize_edges as graph_serialize
     from aegis.privacy import redact as privacy_redact
     from aegis.tools.registry import TOOL_SCHEMA_VERSION
 
@@ -196,57 +141,16 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
             f"cmd={untrusted(masked_cmd)}"
         )
 
-    # evidence: prefetch through the registry (agentic mode agents also fetch
-    # their own); explicit events override (eval corpus); else canned story.
-    prov = "real"
-    if events is not None:
-        evidence_events = list(events)
-    elif registry is not None:
-        proc_tree = registry.call("get_process_tree", "A2", host=host)
-        net = registry.call("get_network_connections", "A2", host=host)
-        evidence_events = list(proc_tree) + list(net)
-    else:
-        evidence_events = _synthetic_events(host)
-        prov = "synthetic"
+    _, evidence_events, edges, shared_edges, _prov = collect_evidence(
+        store, inc_id, host, registry=registry, events=events, seed=seed,
+        audit=audit)
 
-    evidence_records = evidence_from_tool_result(inc_id, "read_tools",
-                                                 evidence_events,
-                                                 provenance=prov)
-    # §14 contradiction detection: find evidence that conflicts on same entity
-    _detect_contradictions(evidence_records)
-    for ev in evidence_records:
-        store.add_evidence(ev)
+    detect_and_record_injections(inc_id, inc.fields, evidence_events, audit=audit)
 
-    # §14 evidence graph: typed edges at collection time (WP-C)
-    from aegis.intel.graph import build_incident_edges, cross_incident_ioc_edges
-    from aegis.intel.graph import persist_edges as persist_graph_edges
-    from aegis.intel.graph import serialize_edges as graph_serialize
-
-    edges = build_incident_edges(evidence_records, inc_id)
-    shared_edges = cross_incident_ioc_edges(store, inc_id)
-    persist_graph_edges(store, inc_id, edges + shared_edges)
-
-    # §15: flag suspicious instruction patterns found in untrusted inputs.
-    # Scan RAW content only — summary_text embeds our own untrusted markers,
-    # which the detector must not self-flag.
-    injection_flags = list(detect_injection(
-        inc.fields.get("command_line", "") or ""))
-    for e in evidence_events:
-        for field_val in (e.command_line, e.file_path):
-            if field_val:
-                injection_flags.extend(detect_injection(field_val))
-    if audit is not None:
-        for pat in set(injection_flags):
-            audit.record("injection_flag", inc_id, actor="telemetry",
-                         pattern=pat)
-        if cmd_kinds:
-            audit.record("privacy_redaction", inc_id, actor="privacy_gateway",
-                         where="incident_summary", kinds=cmd_kinds,
-                         reason="secrets/PII masked before AI-visible view")
-        if edges or shared_edges:
-            audit.record("graph_built", inc_id, actor="graph_builder",
-                         incident_edges=len(edges),
-                         cross_incident_edges=len(shared_edges))
+    if audit is not None and cmd_kinds:
+        audit.record("privacy_redaction", inc_id, actor="privacy_gateway",
+                     where="incident_summary", kinds=cmd_kinds,
+                     reason="secrets/PII masked before AI-visible view")
 
     related = cross_incident_ioc_edges(store, inc_id)
     corr_text = "\n".join(
@@ -326,6 +230,8 @@ def investigate(store, inc_id: str, llm, registry=None, seed=None,
             report = gw.withheld_report(c["agent"], c["tool"],
                                         c.get("_raw_result"))
             if report["withheld_keys"] or report.get("task_filtered"):
+                report.pop("agent", None)
+                report.pop("tool", None)
                 audit.record("privacy_withheld", inc_id, actor=c["agent"],
                              tool=c["tool"], **report)
         store.add_record("toolcall", inc_id, c)
@@ -529,7 +435,7 @@ def run_full_slice(host: str = "win-vm", llm_mode: str = "real",
     if telemetry_mode == "real":
         from aegis.tools.registry import build_read_tools
 
-        es, tel = live_telemetry()
+        es, tel = _live_telemetry()
         reg = build_read_tools(tel, controls=controls)
         candidates = tel.search_events(host=host, event_id="1", limit=5)
         if not candidates:

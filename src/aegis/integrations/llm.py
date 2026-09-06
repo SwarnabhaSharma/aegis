@@ -44,9 +44,12 @@ class LLMClient:
         """§21 versioning: identity of the backing model."""
         return self._model
 
-    def complete_json(self, system: str, user: str, temperature: float = 0.0) -> LLMResult:
+    def complete_json(self, system: str, user: str, temperature: float | None = None) -> LLMResult:
         last_raw = ""
         last_error: Exception | None = None
+        if temperature is None:
+            from aegis.config import get_settings
+            temperature = get_settings().llm_temperature
         for attempt in (1, 2):  # retry-once
             try:
                 # attempt 2 after a parse failure gets corrective feedback so

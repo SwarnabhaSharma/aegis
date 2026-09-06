@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Overview — Aegis{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Security Operations Overview</h2>
+    <p class="muted" style="margin:4px 0 0;">AI-driven investigation. Human-guided response. Measurable outcomes.</p>
+  </div>
+  <span class="trust trust-evidence" id="live-badge">live</span>
+</div>
+
+<div id="overview-error"></div>
+
+<div class="metric-grid" id="metrics" aria-live="polite">
+  <div class="metric-card">
+    <div class="metric-icon" style="background:rgba(248,113,113,0.15);">◉</div>
+    <div><div class="metric-value" id="m-active">{{ stats.total }}</div><div class="metric-label">Active Incidents</div></div>
+    <div class="metric-delta up" id="m-new">+{{ stats.by_state.get('NEW', 0) }} new</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon" style="background:rgba(251,146,60,0.15);">▲</div>
+    <div><div class="metric-value" id="m-awaiting">{{ stats.by_state.get('AWAITING_APPROVAL', 0) }}</div><div class="metric-label">Awaiting Approval</div></div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon" style="background:rgba(74,158,255,0.15);">●</div>
+    <div><div class="metric-value" id="m-inv">{{ stats.by_state.get('INVESTIGATING', 0) + stats.by_state.get('TRIAGING', 0) + stats.by_state.get('CORRELATING', 0) + stats.by_state.get('ASSESSING', 0) }}</div><div class="metric-label">Investigations</div></div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon" style="background:rgba(52,211,153,0.15);">✔</div>
+    <div><div class="metric-value" id="m-success">{{ stats.by_state.get('RESOLVED', 0) }}/{{ stats.total }}</div><div class="metric-label">Response Success</div></div>
+    <div class="metric-delta good" id="m-success-pct"></div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon" style="background:rgba(196,181,253,0.15);">⬢</div>
+    <div><div class="metric-value" id="m-ti">—</div><div class="metric-label">Threats Enriched</div></div>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="card chart-card">
+    <h3>Incident Trend <span class="muted" id="trend-range">Last 7 days</span></h3>
+    <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+  </div>
+  <div class="card chart-card">
+    <h3>Incidents by Type</h3>
+    <div class="chart-wrap"><canvas id="typeDonut"></canvas></div>
+  </div>
+  <div class="card chart-card">
+    <h3>Top Affected Assets <span class="muted">Last 7 days</span></h3>
+    <div class="severity-bars" id="top-assets">
+      {% if recent %}
+      {% for inc in recent[:5] %}
+      <div class="severity-bar"><span class="severity-label mono">{{ inc.fields.get('host', '-') }}</span><div class="severity-track"><div class="severity-fill severity-high" style="width:40%"></div></div></div>
+      {% endfor %}
+      {% else %}
+      {{ ui.empty_state('No asset data yet.') }}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="charts-row" style="grid-template-columns: 2fr 1.2fr 1fr;">
+  <div class="card">
+    <h3>Recent Incidents <a href="/" style="float:right;font-size:12px;">View All →</a></h3>
+    {% if recent %}
+    <table>
+      <thead><tr><th>Severity</th><th>Title</th><th>Affected Asset</th><th>Status</th><th>Updated</th></tr></thead>
+      <tbody id="recent-body">
+        {% for inc in recent[:6] %}
+        <tr>
+          <td>{{ ui.sev(inc.severity) }}</td>
+          <td><a href="/incidents/{{ inc.id }}/console">{{ inc.type }}</a></td>
+          <td class="mono">{{ inc.fields.get('host', '-') }}</td>
+          <td>{{ ui.state_badge(inc.state.value) }}</td>
+          <td class="muted mono">{{ inc.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ ui.empty_state('No incidents yet. POST to /incidents to create one.') }}
+    {% endif %}
+  </div>
+  <div class="card">
+    <h3>Agent Activity (Live) <span class="muted" id="agent-count"></span></h3>
+    <div id="agent-feed"><div class="skel">&nbsp;</div><div class="skel" style="margin-top:8px;">&nbsp;</div></div>
+  </div>
+  <div>
+    <div class="card">
+      <h3>Threat Intelligence <span class="muted">Last 24 hours</span></h3>
+      <dl class="kv" id="ti-summary">
+        <dt>TI lookups</dt><dd class="mono" id="ti-lookups">—</dd>
+        <dt>ATT&amp;CK mappings</dt><dd class="mono" id="ti-mappings">—</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>System Status</h3>
+      <div id="sys-status">
+        {% if operations %}
+        <span class="badge badge-{{ 'authorized' if operations.running else 'failed' }}">{{ 'Running' if operations.running else 'Stopped' }}</span>
+        <span class="muted">{{ operations.processed }} processed · {{ operations.pending_approvals }} pending</span>
+        {% else %}
+        {{ ui.empty_state('Loop status unknown.') }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+fetch('/api/overview').then(function(r){return r.json()}).then(function(d){
+  document.getElementById('m-active').textContent = d.active;
+  document.getElementById('m-new').textContent = '+' + d.new_24h + ' last 24h';
+  document.getElementById('m-awaiting').textContent = d.awaiting_approval;
+  document.getElementById('m-inv').textContent = d.investigating;
+  document.getElementById('m-success').textContent = d.resolved + '/' + d.total;
+  document.getElementById('m-success-pct').textContent = d.response_success_pct === null ? 'no data' : d.response_success_pct + '%';
+  document.getElementById('m-ti').textContent = d.threats_enriched;
+  document.getElementById('ti-lookups').textContent = d.ti_lookups;
+  document.getElementById('ti-mappings').textContent = d.attack_mappings;
+  var max = Math.max.apply(null, d.top_assets.map(function(a){return a.count}).concat([1]));
+  document.getElementById('top-assets').innerHTML = d.top_assets.length ? d.top_assets.map(function(a){
+    return '<div class="severity-bar"><span class="severity-label mono">' + a.host + '</span><div class="severity-track"><div class="severity-fill severity-high" style="width:' + Math.round(a.count/max*100) + '%"></div></div><span class="severity-count">' + a.count + '</span></div>';
+  }).join('') : '<p class="empty">No asset data yet.</p>';
+  var feed = document.getElementById('agent-feed');
+  document.getElementById('agent-count').textContent = d.agent_feed.length ? '(' + d.agent_feed.length + ')' : '';
+  feed.innerHTML = d.agent_feed.length ? d.agent_feed.slice(0,5).map(function(a){
+    return '<div style="padding:6px 0;border-bottom:1px solid var(--border);"><span class="mono">' + a.agent + '</span> <span class="muted">· ' + a.incident_id.slice(0,12) + '</span><br><span class="muted">' + (a.ok ? 'completed' : (a.error || 'failed')) + (a.degraded ? ' (degraded)' : '') + '</span></div>';
+  }).join('') : '<p class="empty">No agent runs yet. Run an investigation first.</p>';
+  var sys = document.getElementById('sys-status');
+  sys.innerHTML = '<span class="badge badge-' + (d.loop_running ? 'authorized' : 'failed') + '">' + (d.loop_running ? 'Running' : 'Stopped') + '</span> <span class="muted">' + d.pending_approvals + ' pending approvals</span>' + (d.skipped ? ' <span class="muted">· ' + d.skipped + ' skipped (partial data)</span>' : '');
+  var days = Object.keys(d.trend7);
+  var totals = days.map(function(k){return d.trend7[k].total});
+  var highs = days.map(function(k){return d.trend7[k].high});
+  new Chart(document.getElementById('trendChart'),{type:'line',data:{labels:days,datasets:[{label:'Total',data:totals,borderColor:'#4a9eff',backgroundColor:'rgba(74,158,255,0.1)',fill:true,tension:0.3,pointRadius:3},{label:'High',data:highs,borderColor:'#f87171',tension:0.3,pointRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#e4e6eb',font:{size:11}}}},scales:{x:{ticks:{color:'#8b95a7',font:{size:10}},grid:{display:false}},y:{ticks:{color:'#8b95a7'},grid:{color:'#2a2f3a'},beginAtZero:true}}}});
+  var tl = Object.keys(d.by_type), td = tl.map(function(k){return d.by_type[k]});
+  new Chart(document.getElementById('typeDonut'),{type:'doughnut',data:{labels:tl,datasets:[{data:td,backgroundColor:['#f87171','#fb923c','#fbbf24','#4a9eff','#c4b5fd','#8b95a7'],borderColor:'#1a1d24',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{color:'#e4e6eb',font:{size:12}}}}}});
+}).catch(function(e){
+  document.getElementById('live-badge').textContent = 'offline';
+  document.getElementById('overview-error').innerHTML = '<div class="state-error" role="alert">Live stats unavailable (' + e.message + '). Showing server-rendered data. <a href="/dashboard">Retry</a></div>';
+  document.getElementById('agent-feed').innerHTML = '<p class="empty">Live feed unavailable.</p>';
+});
+</script>
+{% endblock %}

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     llm_provider: str = "llamacpp"
     llm_model: str = ""
     llm_base_url: str = "http://localhost:8080/v1"
+    llm_temperature: float = 0.0  # live note: temp-0 greedy degenerates on
+    # Ornith-1.0 turboquant (empty/truncated/off-quote JSON); use 0.5-0.6 there
 
     aegis_log_level: str = "INFO"
     aegis_env: str = "dev"
@@ -34,6 +36,10 @@ class Settings(BaseSettings):
     es_alert_index: str = "aegis-dev-alerts"  # or ".siem-signals-*" for real Elastic Security
     es_poll_interval: int = 30  # seconds between polls
     es_poll_enabled: bool = False  # enable via env AEGIS_ES_POLL_ENABLED=1
+
+    # Autonomous operations loop
+    aegis_poll_interval: int = 300  # seconds between loop cycles (0 = continuous)
+    aegis_max_investigations: int = 0  # 0 = unlimited
 
 
 @lru_cache

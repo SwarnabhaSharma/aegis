@@ -96,3 +96,31 @@ def test_transitions_evidence_timeline_ordering(store):
     assert len(evs) == 2
     # timeline: 2 transition mirrors + 2 evidence mirrors + 1 manual = 5
     assert len(tl) == 5
+
+
+def test_add_record_coerces_unserializable():
+    """Live-ES: toolcall docs carrying raw objects must persist (#live-0906)."""
+    import datetime
+
+    from aegis.infrastructure import get_es_client
+    from aegis.incidents.es_store import ElasticsearchStore as ESStore
+
+    client = get_es_client()
+    prefix = f"aegis-test-{uuid.uuid4().hex[:8]}"
+    store = ESStore(client, prefix=prefix)
+    try:
+        store.add_record("toolcall", "inc-test", {
+            "tool": "get_process_tree", "agent": "A2", "ok": True,
+            "when": datetime.datetime(2026, 9, 6, tzinfo=datetime.timezone.utc),
+            "_raw_result": [{"object": object()}],
+        })
+        recs = store.records("inc-test", "toolcall")
+        assert len(recs) == 1 and recs[0]["tool"] == "get_process_tree"
+        assert recs[0]["when"].startswith("2026-09-06")  # coerced, queryable
+        assert "_raw_result" not in recs[0]  # transient payload stripped
+    finally:
+        try:
+            client.indices.delete(index=f"{prefix}-incidents,{prefix}-steps")
+        except es_lib.NotFoundError:
+            pass
+        client.close()

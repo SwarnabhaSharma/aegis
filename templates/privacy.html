@@ -1,7 +1,14 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Privacy — Incident {{ incident_id[:12] }} — Aegis{% endblock %}
 {% block content %}
-<h2>Privacy View — <span class="mono">{{ incident_id[:16] }}</span></h2>
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Privacy <span class="mono muted">{{ incident_id[:16] }}</span></h2>
+    <p class="muted" style="margin:4px 0 0;">What data AEGIS accessed, and why. Redacted before AI views.</p>
+  </div>
+  <span class="trust trust-evidence">data access</span>
+</div>
 
 <div class="tabs">
   <a href="/incidents/{{ incident_id }}/console" class="tab">Detail</a>
@@ -11,25 +18,24 @@
 </div>
 
 <div class="card">
-  <h3>Data Handling per Agent Run</h3>
-  {% if records.get('agentrun') %}
+  <h3>Data Access Log</h3>
+  {% if evidence %}
   <table>
-    <thead>
-      <tr><th>Agent</th><th>Data Requested</th><th>Data Released</th><th>Data Withheld</th></tr>
-    </thead>
+    <thead><tr><th>Time</th><th>Data Type</th><th>Asset</th><th>Purpose</th><th>Status</th></tr></thead>
     <tbody>
-      {% for r in records.agentrun %}
+      {% for ev in evidence %}
       <tr>
-        <td class="mono">{{ r.get('agent', '?') }}</td>
-        <td>{{ r.get('data_requested', '—') }}</td>
-        <td class="mono">{{ r.get('data_released', [])|join(', ') or '—' }}</td>
-        <td class="mono">{{ r.get('data_withheld', [])|join(', ') or '—' }}</td>
+        <td class="mono">{{ ev.get('observed_at', '-') }}</td>
+        <td class="mono">{{ ev.get('source', '-') }}</td>
+        <td class="mono">{{ ev.get('data', {}).get('host', '-') }}</td>
+        <td>{{ ev.get('collection_method', '-') }}</td>
+        <td><span class="badge badge-{{ ev.get('classification', 'normal') }}">{{ ev.get('classification', 'normal') }}</span>{% if ev.get('data', {}).get('_privacy') %} <span class="muted mono">{{ ev.data._privacy.get('kinds', [])|join(', ') }} masked</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No agent runs recorded.</p>
+  {{ ui.empty_state('No data accessed yet.') }}
   {% endif %}
 </div>
 
@@ -53,24 +59,18 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No evidence collected.</p>
+  {{ ui.empty_state('No evidence collected.') }}
   {% endif %}
 </div>
 
 <div class="card">
   <h3>Privacy Audit Trail</h3>
-  {% if records.get('agentrun') %}
-  <p class="muted">All data access is logged. Agents see only AI-visible views per task minimization profiles.
-  Redacted fields are masked before reaching the LLM.</p>
+  <p class="muted">Agents see AI-visible views per task minimization profiles. Secrets/PII masked before reaching the LLM. Per-agent requested/released/withheld detail lives in audit <span class="mono">privacy_redaction / privacy_withheld</span> events.</p>
   <dl class="kv">
-    <dt>Total agent runs</dt><dd>{{ records.agentrun|length }}</dd>
     <dt>Evidence items</dt><dd>{{ evidence|length }}</dd>
-    <dt>Withheld fields</dt>
-    <dd>{% for r in records.agentrun %}{% if r.get('data_withheld') %}{{ r.data_withheld|length }}{% endif %}{% endfor %}</dd>
+    <dt>Masked fields</dt><dd class="mono">{% set kinds = [] %}{% for ev in evidence %}{% if ev.get('data', {}).get('_privacy') %}{{ ev.data._privacy.get('kinds', [])|join(', ') }}{% if not loop.last %}; {% endif %}{% endif %}{% endfor %}{% if not evidence %}—{% endif %}</dd>
   </dl>
-  {% else %}
-  <p class="empty">No data handling recorded.</p>
-  {% endif %}
+  <p><a class="btn btn-secondary btn-sm" href="/incidents/{{ incident_id }}/analyst-view">Analyst view (tokenized PII) →</a></p>
 </div>
 
 {% endblock %}

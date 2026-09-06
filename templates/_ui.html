@@ -1,0 +1,19 @@
+{# Shared UI macros (Phase1). Single partial, reused by all screens. #}
+{% macro sev(value) -%}
+<span class="sev sev-{{ value|lower }}"><span class="sev-dot" aria-hidden="true"></span>{{ value }}</span>
+{%- endmacro %}
+{% macro state_badge(value) -%}
+<span class="badge badge-{{ value|lower }}"><span class="state-dot" aria-hidden="true"></span> {{ value }}</span>
+{%- endmacro %}
+{% macro trust(kind, label) -%}
+<span class="trust trust-{{ kind|lower }}">{{ label or kind }}</span>
+{%- endmacro %}
+{% macro empty_state(msg) -%}
+<p class="empty" role="status">{{ msg }}</p>
+{%- endmacro %}
+{% macro error_state(msg, retry_url) -%}
+<div class="state-error" role="alert"><p>{{ msg }}</p>{% if retry_url %}<a class="btn btn-secondary btn-sm" href="{{ retry_url }}">Retry</a>{% endif %}</div>
+{%- endmacro %}
+{% macro loading_row(cols=4) -%}
+<tr aria-hidden="true">{% for _ in range(cols) %}<td><div class="skel">&nbsp;</div></td>{% endfor %}</tr>
+{%- endmacro %}

@@ -1,7 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Audit — Aegis{% endblock %}
 {% block content %}
-<h2>Audit Replay ({{ events|length }} events)</h2>
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Audit Replay ({{ events|length }} events)</h2>
+    <p class="muted" style="margin:4px 0 0;">Hash-chained. In-memory covers current process; ES-backed runs via per-incident audit index.</p>
+  </div>
+</div>
+
+<form method="get" action="/console/audit" class="card" aria-label="Filter audit events">
+  <div class="topbar" style="margin:0;">
+    <select name="category" class="select" aria-label="Category">
+      <option value="">All Categories</option>
+      {% for c in cats %}
+      <option value="{{ c }}" {% if category == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="actor" class="select" aria-label="Actor">
+      <option value="">All Actors</option>
+      {% for a in actors %}
+      <option value="{{ a }}" {% if actor == a %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    <a href="/console/audit" class="btn btn-secondary btn-sm">Clear</a>
+  </div>
+</form>
 
 {% if events %}
 <div class="card">

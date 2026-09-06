@@ -18,6 +18,12 @@ precision 1.0, recall 1.0, 0 unsafe actions ([report](evals/report-real-20260823
 ## Architecture
 
 ```
+                        ┌─────────────────────────────┐
+                        │  Autonomous Operations Loop  │
+                        │  (poll ES → prioritize →     │
+                        │   feed alerts into pipeline) │
+                        └─────────────┬───────────────┘
+                                      │
 alert ──► ingest ──► [privacy filter] ──► A1..A5 agentic pipeline ──► policy engine
                                                                               │
                                                         ALLOW │ APPROVE │ DENY
@@ -25,6 +31,9 @@ alert ──► ingest ──► [privacy filter] ──► A1..A5 agentic pipel
                                                     D1 executor   AWAITING_APPROVAL
                                                               ▼         (operator)
                                                     D2 verifier ──► RESOLVED / REOPENED / ESCALATED
+
+Console UI: http://localhost:8099/dashboard
+API docs:   http://localhost:8099/docs
 ```
 
 Full diagrams: [docs/diagrams.md](docs/diagrams.md) · Design decisions: [docs/adr.md](docs/adr.md)
@@ -69,6 +78,7 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 | `ES_HOST` | `http://vm_ip:9200` | Elasticsearch endpoint |
 | `ES_USER` / `ES_PASSWORD` | elastic / — | ES credentials (gitignored `.env` only) |
 | `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server |
+| `LLM_TEMPERATURE` | `0.0` | Sampling temp; `0.5`–`0.6` on Ornith-1.0 turboquant (temp-0 greedy emits bad JSON) |
 | `LLM_MODEL` | — | Model id/path (recorded in per-incident manifest) |
 | `AEGIS_STORE` | memory | `es` = persist incidents/steps/audit to ES |
 | `AEGIS_SAFE_MODE` | off | pause autonomy + force approvals |
@@ -85,6 +95,9 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 | `POST /incidents/{id}/investigate` | run agent pipeline + policy |
 | `POST /incidents/{id}/approve` | operator authorization gate |
 | `GET /controls` · `POST /controls/{action}` | emergency controls (pause/safe-mode/disable/revoke) |
+| `POST /operations/start` · `/stop` · `/status` | autonomous operations loop |
+| `GET /operations/approvals` · `POST .../approve` · `.../deny` | approval queue |
+| `GET /dashboard` · `/console/operations` · `/console/controls` | console UI |
 
 ## Safety model
 
@@ -112,7 +125,7 @@ model fabricates evidence references routinely; the validator strips them.
 
 - Simulated executor/verifier backends (ADR-013): isolation state is
   in-memory; contract matches a real EDR backend swap.
-- Local single-node ES; audit hash-chaining not yet implemented.
-- Console UI not built; API is the interface (see gap-audit §28).
+- Console UI: Jinja2 templates with dark theme. Dashboard, incidents,
+  operations, controls, audit, and Swagger API docs.
 - Detection quality depends on the local model — measure with your own
   model via `run_eval.py`, do not assume these numbers transfer.

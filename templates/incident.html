@@ -1,7 +1,25 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui %}
 {% block title %}Incident {{ incident.id[:12] }} — Aegis{% endblock %}
 {% block content %}
-<h2>Incident <span class="mono">{{ incident.id[:16] }}</span></h2>
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">{{ incident.fields.get('process', incident.type) }} <span class="mono muted">{{ incident.id[:16] }}</span></h2>
+    <p class="muted" style="margin:4px 0 0;">{{ incident.fields.get('parent', '') }} spawned {{ incident.fields.get('process', '') }} on {{ incident.fields.get('host', '-') }}</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">{{ ui.sev(incident.severity) }}{{ ui.state_badge(incident.state) }}</div>
+</div>
+
+<div class="phase-stepper" aria-label="Incident phase">
+  {% for s in stages %}
+  {% set i = loop.index0 %}
+  <span class="phase-step {% if stage_index is not none and i < stage_index %}done{% elif i == stage_index %}current{% endif %}">
+    <span class="phase-dot">{% if stage_index is not none and i < stage_index %}✓{% else %}{{ i + 1 }}{% endif %}</span>{{ s }}
+  </span>
+  {% if not loop.last %}<span class="phase-line" aria-hidden="true"></span>{% endif %}
+  {% endfor %}
+  {% if stage_index is none %}<span class="muted" style="margin-left:8px;">terminal: {{ incident.state }}</span>{% endif %}
+</div>
 
 <div class="tabs">
   <a href="/incidents/{{ incident_id }}/console" class="tab active">Detail</a>
@@ -12,14 +30,11 @@
 
 <div class="card">
   <dl class="kv">
-    <dt>State</dt><dd><span class="badge badge-{{ incident.state }}">{{ incident.state }}</span></dd>
-    <dt>Severity</dt><dd><span class="badge badge-{{ incident.severity }}">{{ incident.severity }}</span></dd>
+    <dt>State</dt><dd>{{ ui.state_badge(incident.state) }}</dd>
+    <dt>Severity</dt><dd>{{ ui.sev(incident.severity) }}</dd>
     <dt>Type</dt><dd>{{ incident.type }}</dd>
-    <dt>Source</dt><dd class="mono">{{ incident.fields.get('source', '-') }}</dd>
     <dt>Host</dt><dd class="mono">{{ incident.fields.get('host', '-') }}</dd>
-    <dt>Process</dt><dd class="mono">{{ incident.fields.get('process', '-') }}</dd>
-    <dt>PID</dt><dd class="mono">{{ incident.fields.get('pid', '-') }}</dd>
-    <dt>Parent</dt><dd class="mono">{{ incident.fields.get('parent', '-') }}</dd>
+    <dt>Process</dt><dd class="mono">{{ incident.fields.get('process', '-') }} (pid {{ incident.fields.get('pid', '-') }})</dd>
     <dt>Command line</dt><dd class="mono">{{ incident.fields.get('command_line', '-') }}</dd>
     <dt>Version</dt><dd>{{ incident.version }}</dd>
     <dt>Created</dt><dd class="mono">{{ incident.created_at }}</dd>
@@ -29,7 +44,7 @@
 
 {% if records.get('attack_mapping') %}
 <div class="card">
-  <h3>ATT&CK Mapping</h3>
+  <h3>ATT&amp;CK Mapping {{ ui.trust('ti', 'threat intel') }}</h3>
   {% for mapping in records.attack_mapping %}
   <p class="muted">Data version: <span class="mono">{{ mapping.get('data_version', '?') }}</span></p>
   <table>
@@ -51,7 +66,7 @@
 
 {% if incident.state == 'AWAITING_APPROVAL' %}
 <div class="card">
-  <h3>Operator Action Required</h3>
+  <h3>Operator Action Required {{ ui.trust('human', 'human decision') }}</h3>
   <p>This incident is awaiting approval before response actions can be executed.</p>
   <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
     <form method="POST" action="/incidents/{{ incident_id }}/console/approve" style="display:inline;">
@@ -64,19 +79,9 @@
 </div>
 {% endif %}
 
-{% if incident.state in ['INVESTIGATING', 'TRIAGING', 'CORRELATING', 'ASSESSING', 'RESPONSE_PLANNED', 'EXECUTING', 'VERIFYING'] %}
 <div class="card">
-  <h3>Operator Controls</h3>
-  <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-    <form method="POST" action="/controls/console/cancel/{{ incident_id }}" style="display:inline;">
-      <button type="submit" class="btn btn-danger" style="background:#e67e22;border-color:#d35400;">Cancel Run</button>
-    </form>
-  </div>
-</div>
-{% endif %}
-
-<div class="card">
-  <h3>Policy Decision</h3>
+  <h3>Policy Decision {{ ui.trust('policy', 'policy decision') }}</h3>
+  {% if records.get('policy') %}
   {% for p in records.policy %}
   <dl class="kv">
     <dt>Action</dt><dd class="mono">{{ p.get('action', '?') }}</dd>
@@ -85,11 +90,13 @@
     <dt>Policy version</dt><dd class="mono">{{ p.get('policy_version', '?') }}</dd>
   </dl>
   {% endfor %}
+  {% else %}
+  {{ ui.empty_state('No policy decision yet. Run an investigation first.') }}
+  {% endif %}
 </div>
-{% endif %}
 
 <div class="card">
-  <h3>Agent Activity</h3>
+  <h3>Agent Activity {{ ui.trust('assessment', 'aegis assessment') }}</h3>
   {% if records.get('agentrun') %}
   <table>
     <thead><tr><th>Agent</th><th>OK</th><th>Degraded</th><th>Error</th><th>LLM attempts</th></tr></thead>
@@ -106,11 +113,11 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No agent runs recorded yet.</p>
+  {{ ui.empty_state('No agent runs recorded yet.') }}
   {% endif %}
 
   {% if records.get('toolcall') %}
-  <h3>Tool Calls</h3>
+  <h3>Tool Calls {{ ui.trust('evidence', 'evidence') }}</h3>
   <table>
     <thead><tr><th>Agent</th><th>Tool</th><th>OK</th><th>Error</th></tr></thead>
     <tbody>
@@ -129,7 +136,7 @@
 
 {% if records.get('verification') %}
 <div class="card">
-  <h3>Verification</h3>
+  <h3>Verification {{ ui.trust('verification', 'verified') }}</h3>
   <table>
     <thead><tr><th>Action</th><th>Target</th><th>Expected</th><th>Actual</th><th>Passed</th></tr></thead>
     <tbody>
@@ -163,7 +170,7 @@
 {% endif %}
 
 <div class="card">
-  <h3>Evidence ({{ evidence|length }})</h3>
+  <h3>Evidence ({{ evidence|length }}) {{ ui.trust('evidence', 'evidence') }}</h3>
   {% if evidence %}
   <table>
     <thead><tr><th>ID</th><th>Source</th><th>Method</th><th>Classification</th><th>Confidence</th></tr></thead>
@@ -180,50 +187,30 @@
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No evidence collected.</p>
+  {{ ui.empty_state('No evidence collected.') }}
   {% endif %}
 </div>
 
 <div class="card">
-  <h3>Timeline ({{ timeline|length }})</h3>
-  {% if timeline %}
+  <h3>Replay ({{ replay|length }})</h3>
+  <p class="muted">Merged timeline + transitions + approvals. Policy/verification carry no timestamps, shown in own cards.</p>
+  {% if replay %}
   <table>
-    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Detail</th><th>Kind</th></tr></thead>
     <tbody>
-      {% for t in timeline %}
+      {% for t in replay %}
       <tr>
         <td class="mono">{{ t.ts }}</td>
         <td class="mono">{{ t.get('actor', '-') }}</td>
         <td>{{ t.get('action', '-') }}</td>
         <td>{{ t.get('detail', '-') }}</td>
+        <td class="muted">{{ t.get('kind', '-') }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p class="empty">No timeline entries.</p>
-  {% endif %}
-</div>
-
-<div class="card">
-  <h3>Transitions ({{ transitions|length }})</h3>
-  {% if transitions %}
-  <table>
-    <thead><tr><th>Time</th><th>From</th><th>To</th><th>Actor</th><th>Reason</th></tr></thead>
-    <tbody>
-      {% for t in transitions %}
-      <tr>
-        <td class="mono">{{ t.ts }}</td>
-        <td><span class="badge badge-{{ t.from_state.value }}">{{ t.from_state.value }}</span></td>
-        <td><span class="badge badge-{{ t.to_state.value }}">{{ t.to_state.value }}</span></td>
-        <td class="mono">{{ t.get('actor', '-') }}</td>
-        <td>{{ t.get('reason', '-') }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="empty">No transitions recorded.</p>
+  {{ ui.empty_state('No replay entries yet.') }}
   {% endif %}
 </div>
 

@@ -18,7 +18,8 @@ from aegis.integrations.llm import LLMClient, LLMResult
 
 AGENTS = ["A1", "A2", "A3", "A4", "A5"]
 
-PROMPT_VERSION = "1"  # §21: prompts are versioned; bump on material changes
+PROMPT_VERSION = "2"  # §21: prompts are versioned; bump on material changes
+# v2: final agentic turn forces FINAL answer (live: Ornith-1.0 explored till budget)
 
 # §15: telemetry is untrusted DATA, never instructions. Content is wrapped in
 # delimited blocks with angle brackets escaped (prevents marker forgery), and
@@ -183,8 +184,13 @@ class ReasoningAgent:
             result = self._llm.complete_json(
                 self._system_prompt(tool_names),
                 self._user_prompt(incident_summary, observations)
-                + f"\n\n[Tool turn {turn} of {max_steps}. Reply with exactly ONE "
-                "tool call OR your FINAL answer JSON.]",
+                + (
+                    "\n\n[FINAL TURN. Do not call tools. Reply with your FINAL "
+                    "answer JSON now.]"
+                    if turn == max_steps else
+                    f"\n\n[Tool turn {turn} of {max_steps}. Reply with exactly ONE "
+                    "tool call OR your FINAL answer JSON.]"
+                ),
             )
             if not result.ok:
                 return AgentResult(self.agent_id, ok=False, data={}, degraded=True,

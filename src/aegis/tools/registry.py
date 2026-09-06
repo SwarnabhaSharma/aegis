@@ -104,6 +104,12 @@ class ToolRegistry:
             if tool.func is None:
                 raise RuntimeError(f"{name} has no backend")
 
+            # Root-cause guard (#live-0906): LLMs invent args (query/index/...)
+            # outside schema_in; passthrough turned them into TypeErrors.
+            # Strip to declared schema — one place, all tools.
+            # ponytail: unknown-arg telemetry lost; log instead if debugging LLM arg drift.
+            kwargs = {k: v for k, v in kwargs.items() if k in tool.schema_in}
+
             bucket = self._buckets.setdefault(
                 tool.name, _Bucket(tool.rate_limit or 100000))
             bucket.wait()

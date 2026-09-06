@@ -8,6 +8,7 @@ conflict -> ValueError.
 """
 
 from datetime import UTC, datetime
+import json
 
 from elasticsearch import ConflictError, Elasticsearch, NotFoundError
 
@@ -213,6 +214,12 @@ class ElasticsearchStore(IncidentStore):
         return [h["_source"]["id"] for h in resp["hits"]["hits"]]
 
     def add_record(self, kind: str, incident_id: str, doc: dict) -> None:
+        # ponytail: JSON-safe coercion (default=str); underscore keys are
+        # transient debug payload (_raw_result: full telemetry dumps — ES
+        # dynamic mapping chokes on them). Upgrade path: explicit per-kind
+        # schemas if str-coerced fields ever need querying.
+        doc = {k: v for k, v in doc.items() if not str(k).startswith("_")}
+        doc = json.loads(json.dumps(doc, default=str))
         self._es.index(
             index=self._steps_idx,
             document={

@@ -4,7 +4,6 @@ No new logic: ingest / inspect / investigate / approve wrap existing
 functions. Store selection mirrors the runner (AEGIS_STORE=es).
 """
 
-import os
 import uuid
 from pathlib import Path
 
@@ -18,6 +17,8 @@ from aegis.audit import AuditRecorder
 from aegis.config import get_settings
 from aegis.incidents.ingestion import ingest_alert
 from aegis.incidents.schema import IncidentState
+from aegis.infrastructure import get_es_client
+from aegis.infrastructure import make_store as _make_store
 from aegis.integrations.llm import LLMClient
 from aegis.orchestrator.engine import Orchestrator
 
@@ -30,39 +31,6 @@ class AlertIn(BaseModel):
     incident_type: str = "powershell"
 
 
-def _make_store():
-    if os.getenv("AEGIS_STORE") == "es":
-        from elasticsearch import Elasticsearch
-
-        from aegis.incidents.es_store import ElasticsearchStore
-
-        s = get_settings()
-        es = Elasticsearch(
-            s.es_host, basic_auth=(s.es_user, s.es_password),
-            verify_certs=s.es_verify_certs, request_timeout=60,
-        )
-        return ElasticsearchStore(es)
-    from aegis.incidents.store import InMemoryStore
-
-    return InMemoryStore()
-
-
-_es_singleton = None
-
-
-def _get_es_client():
-    """Return a shared ES client (singleton)."""
-    global _es_singleton
-    if _es_singleton is None:
-        from elasticsearch import Elasticsearch
-        s = get_settings()
-        _es_singleton = Elasticsearch(
-            s.es_host, basic_auth=(s.es_user, s.es_password),
-            verify_certs=s.es_verify_certs, request_timeout=60,
-        )
-    return _es_singleton
-
-
 def create_app(store=None, llm=None, controls=None) -> FastAPI:
     from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -73,7 +41,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                   docs_url="/docs", redoc_url=None)
     _STATIC = Path(__file__).resolve().parents[2] / "static"
     app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
-    st = store or _make_store()
+    st = store or _make_store()[0]
     app.state.store = st  # exposed for tests/introspection
     orch = Orchestrator(st)
     settings = get_settings()
@@ -130,8 +98,18 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         return inc.model_dump()
 
     @app.get("/incidents", tags=["incidents"])
-    def list_incidents(state: str = "", severity: str = ""):
-        """Console UI: list all incidents with optional state/severity filter."""
+    def list_incidents(state: str = "", severity: str = "", q: str = "",
+                       sort: str = "created", order: str = "desc",
+                       page: int = 1, limit: int = 50):
+        """Phase3: queue search/filter/sort/page. List shape unchanged.
+
+        q matches id/type/host/severity/state substring (case-insensitive).
+        sort: created|severity|state. limit capped 100.
+        # ponytail: slice-in-memory; ES-backed pagination if volume matters.
+        """
+        SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3,
+                    "unknown": 4, "info": 5}
+        ql = q.strip().lower()
         out = []
         for iid in st.all_incident_ids():
             inc = st.get(iid)
@@ -141,9 +119,26 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                 continue
             if severity and inc.severity != severity:
                 continue
+            if ql:
+                hay = " ".join([inc.id, inc.type, inc.severity,
+                                inc.state.value,
+                                str((inc.fields or {}).get("host", ""))]).lower()
+                if ql not in hay:
+                    continue
             out.append(inc.model_dump())
-        out.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return out
+        reverse = order != "asc"
+        if sort == "severity":
+            # desc = most severe first (critical first = rank ascending).
+            out.sort(key=lambda x: SEV_RANK.get(str(x.get("severity", "")).lower(), 9),
+                     reverse=(order == "asc"))
+        elif sort == "state":
+            out.sort(key=lambda x: str(x.get("state", "")), reverse=reverse)
+        else:
+            out.sort(key=lambda x: str(x.get("created_at", "")), reverse=reverse)
+        page = max(page, 1)
+        limit = min(max(limit, 1), 100)
+        start = (page - 1) * limit
+        return out[start:start + limit]
 
     @app.get("/incidents/{incident_id}", tags=["incidents"])
     def get_incident(incident_id: str):
@@ -168,6 +163,53 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     def get_records(incident_id: str, kind: str):
         _get(incident_id)
         return st.records(incident_id, kind)
+
+    STAGES = ["Triage", "Investigate", "Assess", "Respond", "Verify"]
+    STAGE_OF = {"NEW": 0, "TRIAGING": 0, "INVESTIGATING": 1,
+                "CORRELATING": 1, "ASSESSING": 2, "RESPONSE_PLANNED": 2,
+                "AWAITING_APPROVAL": 3, "AUTHORIZED": 3, "EXECUTING": 3,
+                "VERIFYING": 4, "RESOLVED": 4}
+
+    @app.get("/incidents/{incident_id}/replay")
+    def get_replay(incident_id: str):
+        """Phase4: merged chronology (timeline + transitions + approvals).
+
+        Policy/verification records carry no timestamps, so they stay in
+        their own cards; untimestamped entries noted via `partial: true`.
+        """
+        inc = _get(incident_id)
+        items = []
+        try:
+            for e in st.timeline(incident_id):
+                d = e.model_dump()
+                items.append({"ts": str(d.get("ts", "")), "actor": d.get("actor", "-"),
+                              "action": d.get("action", "-"), "detail": d.get("detail", ""),
+                              "kind": "timeline"})
+        except Exception:
+            pass
+        try:
+            for t in st.transitions(incident_id):
+                v = vars(t)
+                items.append({"ts": str(v.get("ts", "")),
+                              "actor": str(v.get("actor", "-")),
+                              "action": f"{v['from_state'].value} → {v['to_state'].value}",
+                              "detail": v.get("reason", ""), "kind": "transition"})
+        except Exception:
+            pass
+        try:
+            for a in st.records(incident_id, "approval") or []:
+                items.append({"ts": str(a.get("timestamp", "")),
+                              "actor": a.get("actor", "operator"),
+                              "action": f"approval:{a.get('decision', '?')}",
+                              "detail": a.get("from_state", ""), "kind": "approval"})
+        except Exception:
+            pass
+        items.sort(key=lambda x: x["ts"])
+        state = inc.state.value
+        return {"incident_id": incident_id, "state": state,
+                "stages": STAGES, "stage_index": STAGE_OF.get(state),
+                "replay": items,
+                "partial": True}
 
     @app.post("/incidents/{incident_id}/investigate", tags=["pipeline"])
     def investigate(incident_id: str):
@@ -320,17 +362,349 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
 
     templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
-    @app.get("/", response_class=HTMLResponse)
-    def console_index(request: Request):
+    @app.get("/dashboard", response_class=HTMLResponse)
+    def console_dashboard(request: Request):
         incidents = []
         for iid in st.all_incident_ids():
             inc = st.get(iid)
             if inc is not None:
-                d = inc.model_dump()
-                d["created_at"] = str(d["created_at"])[:19]
-                d["updated_at"] = str(d["updated_at"])[:19]
-                incidents.append(d)
-        incidents.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+                incidents.append(inc)
+
+        from collections import Counter
+        by_state = Counter(i.state.value for i in incidents)
+        by_severity = Counter(i.severity for i in incidents)
+
+        recent = sorted(incidents, key=lambda i: i.created_at, reverse=True)[:10]
+
+        operations = None
+        try:
+            operations = _get_ops_loop().status()
+        except Exception:
+            pass
+
+        return templates.TemplateResponse(request, "dashboard.html", {
+            "stats": {
+                "total": len(incidents),
+                "by_state": dict(by_state),
+                "by_severity": dict(by_severity),
+            },
+            "recent": recent,
+            "operations": operations,
+        })
+
+    @app.get("/api/dashboard/stats")
+    def api_dashboard_stats():
+        incidents = []
+        for iid in st.all_incident_ids():
+            inc = st.get(iid)
+            if inc is not None:
+                incidents.append(inc)
+
+        from collections import Counter
+        by_state = Counter(i.state.value for i in incidents)
+        by_severity = Counter(i.severity for i in incidents)
+        by_type = Counter(i.type for i in incidents)
+        by_host = Counter(i.fields.get("host", "unknown") for i in incidents)
+
+        timeline = {}
+        for i in incidents:
+            day = str(i.created_at)[:10]
+            timeline[day] = timeline.get(day, 0) + 1
+
+        return {
+            "total": len(incidents),
+            "by_state": dict(by_state),
+            "by_severity": dict(by_severity),
+            "by_type": dict(by_type),
+            "by_host": dict(by_host),
+            "timeline": dict(sorted(timeline.items())),
+        }
+
+    @app.get("/api/overview")
+    def api_overview():
+        """Phase2: real-data overview aggregation. No fake metrics.
+
+        response_success_pct = RESOLVED/total (None when total==0).
+        threats_enriched = TI tool calls + ATT&CK mappings observed.
+        Partial-data safe: per-incident failures degrade to skipped count.
+        """
+        from collections import Counter
+        from datetime import UTC, datetime, timedelta
+
+        TI_TOOLS = {"lookup_ip", "lookup_hash", "lookup_domain",
+                    "lookup_cve", "get_threat_intelligence"}
+        TERMINAL = {"RESOLVED", "FAILED", "ESCALATED", "CANCELLED"}
+        ACTIVE_INVESTIGATING = {"TRIAGING", "INVESTIGATING", "CORRELATING",
+                                "ASSESSING", "RESPONSE_PLANNED"}
+
+        incidents = []
+        skipped = 0
+        for iid in st.all_incident_ids():
+            try:
+                inc = st.get(iid)
+                if inc is not None:
+                    incidents.append(inc)
+            except Exception:
+                skipped += 1
+
+        by_state = Counter(i.state.value for i in incidents)
+        by_severity = Counter(i.severity for i in incidents)
+        by_type = Counter(i.type for i in incidents)
+        by_host = Counter((i.fields or {}).get("host", "unknown")
+                          for i in incidents)
+
+        now = datetime.now(UTC)
+        day_ago = now - timedelta(hours=24)
+        week_ago = now - timedelta(days=7)
+
+        def _ts(v):
+            try:
+                s = str(v)[:19]
+                return datetime.fromisoformat(s).replace(tzinfo=UTC)
+            except Exception:
+                return None
+
+        active = sum(1 for i in incidents if i.state.value not in TERMINAL)
+        new_24h = sum(1 for i in incidents
+                      if (_ts(i.created_at) or now) >= day_ago)
+        trend7 = {}
+        for i in incidents:
+            ts = _ts(i.created_at)
+            if ts is None or ts < week_ago:
+                continue
+            day = str(i.created_at)[:10]
+            d = trend7.setdefault(day, {"total": 0, "high": 0})
+            d["total"] += 1
+            if str(i.severity).lower() in ("high", "critical"):
+                d["high"] += 1
+
+        ti_lookups = 0
+        attack_mappings = 0
+        agent_feed = []
+        for inc in sorted(incidents, key=lambda x: str(x.created_at),
+                          reverse=True)[:20]:
+            try:
+                runs = st.records(inc.id, "agentrun") or []
+                calls = st.records(inc.id, "toolcall") or []
+                maps = st.records(inc.id, "attack_mapping") or []
+            except Exception:
+                skipped += 1
+                continue
+            ti_lookups += sum(1 for c in calls
+                              if c.get("tool") in TI_TOOLS)
+            attack_mappings += len(maps)
+            for r in runs[-5:]:
+                agent_feed.append({
+                    "incident_id": inc.id,
+                    "agent": r.get("agent", "?"),
+                    "ok": r.get("ok"),
+                    "degraded": r.get("degraded", False),
+                    "error": r.get("error", ""),
+                })
+        agent_feed = agent_feed[:10]
+
+        total = len(incidents)
+        resolved = by_state.get("RESOLVED", 0)
+        ops = None
+        try:
+            ops = _get_ops_loop().status()
+        except Exception:
+            pass
+
+        recent = []
+        for i in sorted(incidents, key=lambda x: str(x.created_at),
+                        reverse=True)[:8]:
+            recent.append({
+                "id": i.id, "severity": i.severity, "type": i.type,
+                "host": (i.fields or {}).get("host", "-"),
+                "state": i.state.value,
+                "created_at": str(i.created_at)[:19],
+                "updated_at": str(i.updated_at)[:19],
+            })
+
+        return {
+            "total": total,
+            "active": active,
+            "awaiting_approval": by_state.get("AWAITING_APPROVAL", 0),
+            "investigating": sum(by_state.get(s, 0)
+                                 for s in ACTIVE_INVESTIGATING),
+            "resolved": resolved,
+            "failed": by_state.get("FAILED", 0) + by_state.get("ESCALATED", 0),
+            "new_24h": new_24h,
+            "response_success_pct": (round(resolved / total * 100)
+                                     if total else None),
+            "threats_enriched": ti_lookups + attack_mappings,
+            "ti_lookups": ti_lookups,
+            "attack_mappings": attack_mappings,
+            "by_state": dict(by_state),
+            "by_severity": dict(by_severity),
+            "by_type": dict(by_type),
+            "top_assets": [{"host": h, "count": c}
+                           for h, c in by_host.most_common(5)],
+            "trend7": dict(sorted(trend7.items())),
+            "recent": recent,
+            "agent_feed": agent_feed,
+            "pending_approvals": (ops or {}).get("pending_approvals", 0),
+            "loop_running": (ops or {}).get("running"),
+            "skipped": skipped,
+        }
+
+    AGENT_ROLES = {"A1": "Triage", "A2": "Evidence", "A3": "Correlation",
+                   "A4": "ATT&CK Mapping", "A5": "Recommendations"}
+
+    def _agent_feed(limit: int = 20):
+        """Phase5: global agent activity from stored runs. Read-only.
+
+        Status derived, never exposes private reasoning.
+        # ponytail: scan-in-memory; index records if volume matters.
+        """
+        out = []
+        try:
+            ids = st.all_incident_ids()
+        except Exception:
+            return out
+        seen = []
+        for iid in ids:
+            try:
+                inc = st.get(iid)
+            except Exception:
+                continue
+            if inc is not None:
+                seen.append(inc)
+        seen.sort(key=lambda x: str(x.created_at), reverse=True)
+        for inc in seen:
+            try:
+                runs = st.records(inc.id, "agentrun") or []
+                calls = st.records(inc.id, "toolcall") or []
+            except Exception:
+                continue
+            tools_by_agent: dict[str, list] = {}
+            for tc in calls:
+                tools_by_agent.setdefault(tc.get("agent", "?"), []).append(tc.get("tool", "?"))
+            for r in runs:
+                ok, deg = r.get("ok"), r.get("degraded", False)
+                status = "completed" if ok and not deg else ("degraded" if deg else "failed")
+                out.append({
+                    "incident_id": inc.id,
+                    "host": (inc.fields or {}).get("host", "-"),
+                    "severity": inc.severity,
+                    "incident_state": inc.state.value,
+                    "agent": r.get("agent", "?"),
+                    "role": AGENT_ROLES.get(r.get("agent", ""), "-"),
+                    "status": status,
+                    "ok": ok, "degraded": deg,
+                    "error": r.get("error", ""),
+                    "llm_attempts": r.get("llm_attempts", 1),
+                    "tools": sorted(set(tools_by_agent.get(r.get("agent", "?"), []))),
+                    "updated": str(inc.updated_at)[:19],
+                })
+                if len(out) >= limit:
+                    return out
+        return out
+
+    @app.get("/api/agents/activity")
+    def api_agents_activity(limit: int = 20):
+        limit = min(max(limit, 1), 100)
+        return {"activity": _agent_feed(limit)}
+
+    @app.get("/console/agents", response_class=HTMLResponse)
+    def console_agents(request: Request, limit: int = 20):
+        limit = min(max(limit, 1), 100)
+        return templates.TemplateResponse(
+            request, "agents.html", {"activity": _agent_feed(limit), "limit": limit})
+
+    @app.get("/console/controls", response_class=HTMLResponse)
+    def console_controls(request: Request):
+        return templates.TemplateResponse(request, "controls.html", {
+            "controls": ctl,
+        })
+
+    @app.post("/console/controls/toggle/{action}")
+    def console_controls_toggle(action: str):
+        from fastapi.responses import RedirectResponse
+        msg = ""
+        if action == "pause":
+            if ctl.paused:
+                ctl.resume()
+                msg = "Resumed"
+            else:
+                ctl.pause()
+                msg = "Paused"
+        elif action == "safe_mode":
+            if ctl.safe_mode:
+                ctl.restore_normal()
+                msg = "Safe mode exited"
+            else:
+                ctl.enter_safe_mode()
+                msg = "Safe mode enabled"
+        elif action == "approval_all":
+            ctl.require_approval_all = not ctl.require_approval_all
+            msg = "Require approval toggled"
+        return RedirectResponse(f"/console/controls?toast={msg}", status_code=303)
+
+    @app.post("/console/controls/agent/{action}")
+    def console_controls_agent(action: str, agent_id: str = ""):
+        from fastapi.responses import RedirectResponse
+        msg = ""
+        if action == "disable" and agent_id:
+            ctl.disable_agent(agent_id)
+            msg = f"Agent {agent_id} disabled"
+        elif action == "enable" and agent_id:
+            ctl.enable_agent(agent_id)
+            msg = f"Agent {agent_id} enabled"
+        return RedirectResponse(f"/console/controls?toast={msg}", status_code=303)
+
+    @app.post("/console/controls/tool/{action}")
+    def console_controls_tool(action: str, tool_name: str = ""):
+        from fastapi.responses import RedirectResponse
+        msg = ""
+        if action == "revoke" and tool_name:
+            ctl.revoke_tool(tool_name)
+            msg = f"Tool {tool_name} revoked"
+        elif action == "restore" and tool_name:
+            ctl.restore_tool(tool_name)
+            msg = f"Tool {tool_name} restored"
+        return RedirectResponse(f"/console/controls?toast={msg}", status_code=303)
+
+    @app.get("/", response_class=HTMLResponse)
+    def console_index(request: Request, state: str = "", severity: str = "",
+                      q: str = "", sort: str = "created", order: str = "desc",
+                      page: int = 1, limit: int = 25):
+        SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3,
+                    "unknown": 4, "info": 5}
+        ql = q.strip().lower()
+        incidents = []
+        for iid in st.all_incident_ids():
+            inc = st.get(iid)
+            if inc is None:
+                continue
+            if state and inc.state.value != state:
+                continue
+            if severity and inc.severity != severity:
+                continue
+            if ql:
+                hay = " ".join([inc.id, inc.type, inc.severity,
+                                inc.state.value,
+                                str((inc.fields or {}).get("host", ""))]).lower()
+                if ql not in hay:
+                    continue
+            d = inc.model_dump()
+            d["created_at"] = str(d["created_at"])[:19]
+            d["updated_at"] = str(d["updated_at"])[:19]
+            incidents.append(d)
+        reverse = order != "asc"
+        if sort == "severity":
+            incidents.sort(key=lambda x: SEV_RANK.get(str(x.get("severity", "")).lower(), 9),
+                           reverse=(order == "asc"))
+        elif sort == "state":
+            incidents.sort(key=lambda x: str(x.get("state", "")), reverse=reverse)
+        else:
+            incidents.sort(key=lambda x: str(x.get("created_at", "")), reverse=reverse)
+        total = len(incidents)
+        page = max(page, 1)
+        limit = min(max(limit, 1), 100)
+        start = (page - 1) * limit
+        incidents = incidents[start:start + limit]
         controls = {
             "paused": ctl.paused, "safe_mode": ctl.safe_mode,
             "require_approval_all": ctl.require_approval_all,
@@ -338,7 +712,10 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             "revoked_tools": sorted(ctl.revoked_tools),
         }
         return templates.TemplateResponse(
-            request, "index.html", {"incidents": incidents, "controls": controls})
+            request, "index.html", {"incidents": incidents, "controls": controls,
+                                    "q": q, "state": state, "severity": severity,
+                                    "sort": sort, "order": order,
+                                    "page": page, "limit": limit, "total": total})
 
     @app.get("/incidents/{incident_id}/console",
              response_class=HTMLResponse)
@@ -362,11 +739,30 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             transitions.append(tv)
         records = {kind: st.records(incident_id, kind)
                    for kind in ("agentrun", "toolcall", "policy",
-                                "verification", "manifest", "attack_mapping")}
+                                "verification", "manifest", "attack_mapping",
+                                "approval")}
+        replay = []
+        for t in timeline:
+            replay.append({"ts": t.get("ts", ""), "actor": t.get("actor", "-"),
+                           "action": t.get("action", "-"),
+                           "detail": t.get("detail", ""), "kind": "timeline"})
+        for t in transitions:
+            replay.append({"ts": t.get("ts", ""), "actor": t.get("actor", "-"),
+                           "action": f"{t['from_state']} → {t['to_state']}",
+                           "detail": t.get("reason", ""), "kind": "transition"})
+        for a in records.get("approval") or []:
+            replay.append({"ts": str(a.get("timestamp", ""))[:19],
+                           "actor": a.get("actor", "operator"),
+                           "action": f"approval:{a.get('decision', '?')}",
+                           "detail": a.get("from_state", ""), "kind": "approval"})
+        replay.sort(key=lambda x: x["ts"])
         return templates.TemplateResponse(
             request, "incident.html", {"incident": inc_d,
                                        "timeline": timeline, "evidence": evidence,
                                        "transitions": transitions, "records": records,
+                                       "replay": replay,
+                                       "stages": STAGES,
+                                       "stage_index": STAGE_OF.get(inc.state.value),
                                        "incident_id": incident_id})
 
     @app.get("/incidents/{incident_id}/privacy",
@@ -388,13 +784,16 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         inc_d["updated_at"] = str(inc_d["updated_at"])[:19]
         records = {kind: st.records(incident_id, kind)
                    for kind in ("agentrun", "policy", "verification",
-                                "attack_mapping")}
+                                "attack_mapping", "approval",
+                                "response_action", "manifest")}
+        evidence = [e.model_dump() for e in st.evidence(incident_id)]
         return templates.TemplateResponse(
             request, "response.html", {"incident_id": incident_id,
-                                       "incident": inc_d, "records": records})
+                                       "incident": inc_d, "records": records,
+                                       "evidence": evidence})
 
     @app.get("/console/audit", response_class=HTMLResponse)
-    def console_audit(request: Request):
+    def console_audit(request: Request, category: str = "", actor: str = ""):
         """Audit replay: reads from the in-memory AuditRecorder's events list
         (covers the current process). For ES-backed runs use /incidents/{id}/audit
         via the ES index."""
@@ -406,8 +805,16 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                        "seq": e.seq, "hash": e.hash[:12],
                        "detail": e.detail}
                       for e in audit_rec.events]
+        cats = sorted({e["category"] for e in events})
+        actors = sorted({e["actor"] for e in events})
+        if category:
+            events = [e for e in events if e["category"] == category]
+        if actor:
+            events = [e for e in events if e["actor"] == actor]
         return templates.TemplateResponse(
-            request, "audit.html", {"events": events})
+            request, "audit.html", {"events": events, "cats": cats,
+                                    "actors": actors, "category": category,
+                                    "actor": actor})
 
     @app.get("/incidents/{incident_id}/console/graph", response_class=HTMLResponse)
     def console_graph(request: Request, incident_id: str):
@@ -469,7 +876,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         if current == IncidentState.AWAITING_APPROVAL:
             orch.transition(incident_id, IncidentState.AUTHORIZED,
                             "operator", "approved via console")
-        return RedirectResponse(f"/incidents/{incident_id}/console",
+        return RedirectResponse(f"/incidents/{incident_id}/console?toast=Approved",
                                 status_code=303)
 
     @app.post("/incidents/{incident_id}/console/deny")
@@ -480,7 +887,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         if current == IncidentState.AWAITING_APPROVAL:
             orch.transition(incident_id, IncidentState.FAILED,
                             "operator", "denied via console")
-        return RedirectResponse(f"/incidents/{incident_id}/console",
+        return RedirectResponse(f"/incidents/{incident_id}/console?toast=Denied",
                                 status_code=303)
 
     @app.post("/controls/console/cancel/{incident_id}")
@@ -489,6 +896,53 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         ctl.cancel_incident(incident_id)
         return RedirectResponse(f"/incidents/{incident_id}/console",
                                 status_code=303)
+
+    # -- console: operations --
+
+    @app.get("/console/operations", response_class=HTMLResponse)
+    def console_operations(request: Request):
+        loop = _get_ops_loop()
+        status = loop.status()
+        approvals = loop.approval_queue.all_requests()
+        return templates.TemplateResponse(
+            request, "operations.html",
+            {"status": status, "approvals": approvals})
+
+    @app.post("/console/operations/start")
+    def console_operations_start():
+        from fastapi.responses import RedirectResponse
+        loop = _get_ops_loop()
+        loop.start()
+        return RedirectResponse("/console/operations?toast=Loop+started", status_code=303)
+
+    @app.post("/console/operations/stop")
+    def console_operations_stop():
+        from fastapi.responses import RedirectResponse
+        loop = _get_ops_loop()
+        loop.stop()
+        return RedirectResponse("/console/operations?toast=Loop+stopped", status_code=303)
+
+    @app.post("/console/operations/cycle")
+    def console_operations_cycle():
+        from fastapi.responses import RedirectResponse
+        loop = _get_ops_loop()
+        result = loop.run_cycle()
+        msg = f"Cycle complete: {result.get('processed', 0)} processed"
+        return RedirectResponse(f"/console/operations?toast={msg}", status_code=303)
+
+    @app.post("/console/operations/approvals/{request_id}/approve")
+    def console_operations_approve(request_id: str):
+        from fastapi.responses import RedirectResponse
+        loop = _get_ops_loop()
+        loop.approval_queue.approve(request_id)
+        return RedirectResponse("/console/operations?toast=Approved", status_code=303)
+
+    @app.post("/console/operations/approvals/{request_id}/deny")
+    def console_operations_deny(request_id: str):
+        from fastapi.responses import RedirectResponse
+        loop = _get_ops_loop()
+        loop.approval_queue.deny(request_id)
+        return RedirectResponse("/console/operations?toast=Denied", status_code=303)
 
     # -- health & readiness --
 
@@ -522,7 +976,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     def elastic_status():
         """Check ES connection + alert index status."""
         try:
-            es_client = _get_es_client()
+            es_client = get_es_client()
             resp = es_client.count(index=settings.es_alert_index)
             return {"connected": True, "alert_count": resp["count"],
                     "alert_index": settings.es_alert_index}
@@ -533,7 +987,7 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     def elastic_poll():
         """One poll cycle: fetch uningested alerts → normalize → ingest."""
         from aegis.integrations.elastic_adapter import ElasticAlertPoller
-        es_client = _get_es_client()
+        es_client = get_es_client()
         poller = ElasticAlertPoller(es=es_client, alert_index=settings.es_alert_index, store=st)
         incidents = poller.poll_once()
         return {"polled": len(incidents),
@@ -544,10 +998,72 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         """Generate synthetic alerts for demo."""
         from aegis.integrations.elastic_adapter import generate_synthetic_alerts
         count = min(count, 100)  # ponytail: cap to prevent abuse
-        es_client = _get_es_client()
+        es_client = get_es_client()
         written = generate_synthetic_alerts(
             es=es_client, index=settings.es_alert_index, count=count)
         return {"generated": written, "index": settings.es_alert_index}
+
+    # -- autonomous operations loop --
+
+    from aegis.operations.loop import OperationsLoop
+
+    _ops_loop: OperationsLoop | None = None
+
+    def _get_ops_loop() -> OperationsLoop:
+        nonlocal _ops_loop
+        if _ops_loop is None:
+            if default_llm is not None:
+                loop_llm = default_llm
+            else:
+                from aegis.slice import FakeLLM
+                loop_llm = FakeLLM()
+            _ops_loop = OperationsLoop(st, loop_llm, controls=ctl)
+        return _ops_loop
+
+    @app.post("/operations/start", tags=["operations"])
+    def operations_start(poll_interval: int | None = None):
+        loop = _get_ops_loop()
+        if poll_interval is not None:
+            loop._poll_interval = poll_interval
+        loop.start()
+        return {"status": "started", **loop.status()}
+
+    @app.post("/operations/stop", tags=["operations"])
+    def operations_stop():
+        loop = _get_ops_loop()
+        loop.stop()
+        return {"status": "stopped", **loop.status()}
+
+    @app.get("/operations/status", tags=["operations"])
+    def operations_status():
+        return _get_ops_loop().status()
+
+    @app.post("/operations/cycle", tags=["operations"])
+    def operations_cycle():
+        """Run one poll cycle manually (for testing/demo)."""
+        return _get_ops_loop().run_cycle()
+
+    @app.get("/operations/approvals", tags=["operations"])
+    def operations_approvals():
+        queue = _get_ops_loop().approval_queue
+        return {"requests": [vars(r) for r in queue.all_requests()],
+                **queue.stats()}
+
+    @app.post("/operations/approvals/{request_id}/approve", tags=["operations"])
+    def operations_approve(request_id: str):
+        queue = _get_ops_loop().approval_queue
+        req = queue.approve(request_id)
+        if req is None:
+            raise HTTPException(404, "Request not found or already resolved")
+        return vars(req)
+
+    @app.post("/operations/approvals/{request_id}/deny", tags=["operations"])
+    def operations_deny(request_id: str):
+        queue = _get_ops_loop().approval_queue
+        req = queue.deny(request_id)
+        if req is None:
+            raise HTTPException(404, "Request not found or already resolved")
+        return vars(req)
 
     return app
 

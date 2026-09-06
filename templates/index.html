@@ -1,43 +1,79 @@
 {% extends "base.html" %}
-{% block title %}Incidents — Aegis{% endblock %}
+{% import "_ui.html" as ui %}
+{% block title %}Incident Queue — Aegis{% endblock %}
 {% block content %}
-<h2>Incidents ({{ incidents|length }})</h2>
-
-<div class="controls-panel">
-  <a href="/?state=awaiting_approval" class="btn btn-secondary">Awaiting Approval</a>
-  <a href="/?state=escalated" class="btn btn-secondary">Escalated</a>
-  <a href="/?state=resolved" class="btn btn-secondary">Resolved</a>
-  <a href="/" class="btn btn-secondary">All</a>
+<div class="page-header">
+  <div>
+    <h2 style="border:none;padding:0;margin:0;">Incident Queue ({{ total }})</h2>
+    <p class="muted" style="margin:4px 0 0;">What requires attention right now?</p>
+  </div>
+  <a class="btn btn-secondary btn-sm" href="/docs" target="_blank" rel="noopener">+ New via API</a>
 </div>
+
+<form method="get" action="/" class="card" role="search" aria-label="Filter incidents">
+  <div class="topbar" style="margin:0;">
+    <input type="search" name="q" class="search-input" placeholder="Search id, type, host…" value="{{ q }}" aria-label="Search incidents">
+    <select name="severity" class="select" aria-label="Severity">
+      <option value="">All Severities</option>
+      {% for s in ['critical','high','medium','low','unknown'] %}
+      <option value="{{ s }}" {% if severity == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="state" class="select" aria-label="State">
+      <option value="">All States</option>
+      {% for s in ['NEW','TRIAGING','INVESTIGATING','CORRELATING','ASSESSING','RESPONSE_PLANNED','AWAITING_APPROVAL','AUTHORIZED','EXECUTING','VERIFYING','RESOLVED','ESCALATED','FAILED'] %}
+      <option value="{{ s }}" {% if state == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="sort" class="select" aria-label="Sort">
+      <option value="created" {% if sort == 'created' %}selected{% endif %}>Newest</option>
+      <option value="severity" {% if sort == 'severity' %}selected{% endif %}>Severity</option>
+      <option value="state" {% if sort == 'state' %}selected{% endif %}>State</option>
+    </select>
+    <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+    <a href="/" class="btn btn-secondary btn-sm">Clear</a>
+  </div>
+</form>
 
 <div class="card">
 {% if incidents %}
 <table>
   <thead>
     <tr>
-      <th>ID</th>
-      <th>State</th>
       <th>Severity</th>
-      <th>Type</th>
-      <th>Host</th>
-      <th>Created</th>
+      <th>Incident ID</th>
+      <th>Title</th>
+      <th>Affected Asset</th>
+      <th>Status</th>
+      <th>Updated</th>
     </tr>
   </thead>
   <tbody>
     {% for inc in incidents %}
     <tr>
-      <td><a href="/incidents/{{ inc.id }}/console">{{ inc.id[:12] }}</a></td>
-      <td><span class="badge badge-{{ inc.state }}">{{ inc.state }}</span></td>
-      <td><span class="badge badge-{{ inc.severity }}">{{ inc.severity }}</span></td>
+      <td>{{ ui.sev(inc.severity) }}</td>
+      <td><a class="mono" href="/incidents/{{ inc.id }}/console">{{ inc.id[:12] }}</a></td>
       <td>{{ inc.type }}</td>
       <td class="mono">{{ inc.fields.get('host', '-') }}</td>
-      <td class="muted mono">{{ inc.created_at }}</td>
+      <td>{{ ui.state_badge(inc.state) }}</td>
+      <td class="muted mono">{{ inc.updated_at }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+<div class="ops-status-row" style="margin-top:12px;">
+  <span class="muted">Page {{ page }} · showing {{ incidents|length }} of {{ total }}</span>
+  <span style="margin-left:auto;display:flex;gap:8px;">
+    {% if page > 1 %}
+    <a class="btn btn-secondary btn-sm" href="/?q={{ q }}&severity={{ severity }}&state={{ state }}&sort={{ sort }}&order={{ order }}&page={{ page - 1 }}&limit={{ limit }}">← Prev</a>
+    {% endif %}
+    {% if total > page * limit %}
+    <a class="btn btn-secondary btn-sm" href="/?q={{ q }}&severity={{ severity }}&state={{ state }}&sort={{ sort }}&order={{ order }}&page={{ page + 1 }}&limit={{ limit }}">Next →</a>
+    {% endif %}
+  </span>
+</div>
 {% else %}
-<p class="empty">No incidents yet. POST to <code>/incidents</code> to create one.</p>
+{{ ui.empty_state('No incidents match. Clear filters or POST to /incidents to create one.') }}
 {% endif %}
 </div>
 
