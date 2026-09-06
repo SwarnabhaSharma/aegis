@@ -92,23 +92,17 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             raise HTTPException(status_code=404, detail="incident not found")
         return inc
 
-    @app.post("/incidents", tags=["incidents"])
-    def create_incident(alert: AlertIn):
-        inc = ingest_alert(st, alert.source, alert.fields, alert.incident_type)
-        return inc.model_dump()
+    SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3,
+                "unknown": 4, "info": 5}
 
-    @app.get("/incidents", tags=["incidents"])
-    def list_incidents(state: str = "", severity: str = "", q: str = "",
-                       sort: str = "created", order: str = "desc",
-                       page: int = 1, limit: int = 50):
-        """Phase3: queue search/filter/sort/page. List shape unchanged.
+    def _query_incidents(q: str = "", state: str = "", severity: str = "",
+                         sort: str = "created", order: str = "desc"):
+        """P1: shared queue filter/sort over Incident objects.
 
         q matches id/type/host/severity/state substring (case-insensitive).
-        sort: created|severity|state. limit capped 100.
+        sort: created|severity|state; severity desc = most severe first.
         # ponytail: slice-in-memory; ES-backed pagination if volume matters.
         """
-        SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3,
-                    "unknown": 4, "info": 5}
         ql = q.strip().lower()
         out = []
         for iid in st.all_incident_ids():
@@ -125,20 +119,37 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
                                 str((inc.fields or {}).get("host", ""))]).lower()
                 if ql not in hay:
                     continue
-            out.append(inc.model_dump())
+            out.append(inc)
         reverse = order != "asc"
         if sort == "severity":
-            # desc = most severe first (critical first = rank ascending).
-            out.sort(key=lambda x: SEV_RANK.get(str(x.get("severity", "")).lower(), 9),
+            out.sort(key=lambda i: SEV_RANK.get(str(i.severity).lower(), 9),
                      reverse=(order == "asc"))
         elif sort == "state":
-            out.sort(key=lambda x: str(x.get("state", "")), reverse=reverse)
+            out.sort(key=lambda i: i.state.value, reverse=reverse)
         else:
-            out.sort(key=lambda x: str(x.get("created_at", "")), reverse=reverse)
+            out.sort(key=lambda i: str(i.created_at), reverse=reverse)
+        return out
+
+    def _paginate(items: list, page: int, limit: int):
         page = max(page, 1)
         limit = min(max(limit, 1), 100)
         start = (page - 1) * limit
-        return out[start:start + limit]
+        return items[start:start + limit], page, limit
+
+    @app.post("/incidents", tags=["incidents"])
+    def create_incident(alert: AlertIn):
+        inc = ingest_alert(st, alert.source, alert.fields, alert.incident_type)
+        return inc.model_dump()
+
+    @app.get("/incidents", tags=["incidents"])
+    def list_incidents(state: str = "", severity: str = "", q: str = "",
+                       sort: str = "created", order: str = "desc",
+                       page: int = 1, limit: int = 50):
+        """Phase3: queue search/filter/sort/page. List shape unchanged."""
+        out = [inc.model_dump()
+               for inc in _query_incidents(q, state, severity, sort, order)]
+        page_items, _, _ = _paginate(out, page, limit)
+        return page_items
 
     @app.get("/incidents/{incident_id}", tags=["incidents"])
     def get_incident(incident_id: str):
@@ -670,41 +681,14 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     def console_index(request: Request, state: str = "", severity: str = "",
                       q: str = "", sort: str = "created", order: str = "desc",
                       page: int = 1, limit: int = 25):
-        SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3,
-                    "unknown": 4, "info": 5}
-        ql = q.strip().lower()
         incidents = []
-        for iid in st.all_incident_ids():
-            inc = st.get(iid)
-            if inc is None:
-                continue
-            if state and inc.state.value != state:
-                continue
-            if severity and inc.severity != severity:
-                continue
-            if ql:
-                hay = " ".join([inc.id, inc.type, inc.severity,
-                                inc.state.value,
-                                str((inc.fields or {}).get("host", ""))]).lower()
-                if ql not in hay:
-                    continue
+        for inc in _query_incidents(q, state, severity, sort, order):
             d = inc.model_dump()
             d["created_at"] = str(d["created_at"])[:19]
             d["updated_at"] = str(d["updated_at"])[:19]
             incidents.append(d)
-        reverse = order != "asc"
-        if sort == "severity":
-            incidents.sort(key=lambda x: SEV_RANK.get(str(x.get("severity", "")).lower(), 9),
-                           reverse=(order == "asc"))
-        elif sort == "state":
-            incidents.sort(key=lambda x: str(x.get("state", "")), reverse=reverse)
-        else:
-            incidents.sort(key=lambda x: str(x.get("created_at", "")), reverse=reverse)
         total = len(incidents)
-        page = max(page, 1)
-        limit = min(max(limit, 1), 100)
-        start = (page - 1) * limit
-        incidents = incidents[start:start + limit]
+        incidents, page, limit = _paginate(incidents, page, limit)
         controls = {
             "paused": ctl.paused, "safe_mode": ctl.safe_mode,
             "require_approval_all": ctl.require_approval_all,
