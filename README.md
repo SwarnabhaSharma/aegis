@@ -42,6 +42,17 @@ API docs:   http://localhost:8099/docs
 
 Full diagrams: [docs/diagrams.md](docs/diagrams.md) · Design decisions: [docs/adr.md](docs/adr.md)
 · Requirement tracker: [docs/gap-audit.md](docs/gap-audit.md)
+· Domain vocabulary: [CONTEXT.md](CONTEXT.md)
+
+```
+src/aegis/        pipeline: agents/ (A1–A5) · incidents/ (store, schema) · policies/ (engine)
+                  privacy/ (gateway) · tools/ (registry, telemetry) · integrations/ (TI, LLM)
+                  operations/ (autonomous loop) · api.py (routes + console aggregation)
+templates/        12 Jinja pages (dashboard, queue, incident, agents, response, privacy, audit…)
+scripts/          run_slice.py (single alert) · run_eval.py (corpus eval)
+evals/            corpus.json + per-scenario reports + metrics
+tests/            offline unit suite · integration/ (live-ES, needs AEGIS_INTEGRATION=1)
+```
 
 ## Quickstart
 
@@ -50,15 +61,17 @@ server (`llama-server -m <model.gguf> --port 8080`) for real LLM mode.
 
 ```powershell
 pip install -r requirements.txt
+pip install -e .               # makes `aegis` importable for uvicorn (src layout)
 copy .env.example .env        # then set ES_PASSWORD etc. (see table below)
 
-# offline demo — no VM, no LLM needed
+# offline demo — no VM, no LLM needed (in-memory store; nothing persists)
 python scripts\run_slice.py --llm fake --telemetry synthetic
 
 # full live: real model + real telemetry from your host
 python scripts\run_slice.py --llm real --telemetry real --host <your-hostname>
 
-# durable mode: incidents persisted to Elasticsearch (visible in Kibana)
+# durable mode: incidents persisted to Elasticsearch instead of memory
+# (default AEGIS_STORE=memory keeps everything in-process; visible in Kibana with es)
 $env:AEGIS_STORE="es"; python scripts\run_slice.py --llm fake
 
 # real host telemetry (winlogbeat index) instead of canned data
@@ -82,7 +95,7 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 
 | Var | Default | Purpose |
 |---|---|---|
-| `ES_HOST` | `http://vm_ip:9200` | Elasticsearch endpoint |
+| `ES_HOST` | `http://192.168.56.105:9200` | Elasticsearch endpoint |
 | `ES_USER` / `ES_PASSWORD` | elastic / — | ES credentials (gitignored `.env` only) |
 | `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server |
 | `LLM_TEMPERATURE` | `0.0` | Sampling temp; `0.5`–`0.6` on Ornith-1.0 turboquant (temp-0 greedy emits bad JSON) |
@@ -96,6 +109,7 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 | `AEGIS_REQUIRE_APPROVAL` | off | human gate on every action |
 | `AEGIS_DISABLE_AGENTS` | — | comma list, e.g. `A3,A4` |
 | `AEGIS_REVOKED_TOOLS` | — | comma list of revoked tool names |
+| `AEGIS_LOG_LEVEL` | `INFO` | `DEBUG` for first-run troubleshooting (noisy: per-tool calls) |
 
 ## API surface
 
@@ -129,16 +143,25 @@ Console tour and screen-by-screen demo: [docs/demo-scenario.md](docs/demo-scenar
   patterns are flagged to audit; fabricated evidence_ids are stripped.
 - **Privacy**: secrets/PII detected and redacted before AI views; decisions
   audited. Emergency controls operate without the LLM.
+- **Console/API auth**: when `AEGIS_API_KEY` is set, every route requires it —
+  browsers get a 403 page, API clients get JSON 401. Open only in dev (unset).
+- **Output encoding**: console renders API/telemetry strings via `textContent`
+  only — no `innerHTML` sinks; a regression test scans all templates.
 
 Threat analysis: [docs/threat-model.md](docs/threat-model.md).
 
 ## Evaluation
 
-`evals/corpus.json` holds labeled scenarios (malicious/benign/ambiguous,
+Strongest proof artifact: the per-scenario report
+([report-real-20260823-060037.md](evals/report-real-20260823-060037.md)) —
+metrics plus what happened in every scenario, including where the model
+fabricated evidence references and the validator stripped them.
+
+`evals/corpus.json` holds the labeled scenarios (malicious/benign/ambiguous,
 incl. prompt-injection-in-telemetry). `scripts/run_eval.py` runs them through
-the real pipeline and writes metrics + per-scenario reports into `evals/`.
-Current measured limitations are listed in the report — e.g. the local 9B
-model fabricates evidence references routinely; the validator strips them.
+the real pipeline and writes fresh metrics + reports into `evals/`.
+Rerun before quoting numbers: the checked-in report predates prompt v2 and
+the `LLM_TEMPERATURE` knob.
 
 ## Limitations
 
@@ -146,8 +169,5 @@ model fabricates evidence references routinely; the validator strips them.
   in-memory; contract matches a real EDR backend swap.
 - Console UI: Jinja2 server-rendered, no build step (ADR-008). No threat map,
   no global search, no ad-hoc query console — deferred, see [ui-plan](docs/ui-plan.md).
-  API/telemetry strings render via `textContent` only (no `innerHTML` sinks).
-- Console + API require `AEGIS_API_KEY` when set (403 page / 401 JSON);
-  open in dev without it.
 - Detection quality depends on the local model — measure with your own
   model via `run_eval.py`, do not assume these numbers transfer.
