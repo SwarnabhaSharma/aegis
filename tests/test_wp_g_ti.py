@@ -22,6 +22,18 @@ def test_private_iocs_suppressed():
     assert is_private_ioc("185.220.101.4") is False
 
 
+def test_build_registry_wires_ti_chain(monkeypatch):
+    """build_registry must pass build_chain() into build_read_tools —
+    private-IP suppression only exists on the chain path, never on ti.lookup."""
+    import aegis.infrastructure as infra
+
+    monkeypatch.setattr(infra, "live_telemetry",
+                        lambda: (None, InMemoryTelemetry([])))
+    _, reg = infra.build_registry()
+    r = reg.call("lookup_ip", "A4", ip="10.0.0.5")
+    assert r["category"] == "internal-suppressed"
+
+
 def test_chain_suppresses_internal_ip():
     settings = type("S", (), {"ti_providers": "abuseipdb",
                               "abuseipdb_api_key": "k",

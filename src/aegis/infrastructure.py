@@ -59,7 +59,9 @@ def live_telemetry():
 
 def build_registry(controls=None):
     """Production read-tool registry backed by live winlogbeat telemetry."""
+    from aegis.intel.ti_chain import build_chain
     from aegis.tools.registry import build_read_tools
 
     es, tel = live_telemetry()
-    return es, build_read_tools(tel, controls=controls)
+    chain, _ = build_chain(get_settings())
+    return es, build_read_tools(tel, controls=controls, ti_chain=chain)
