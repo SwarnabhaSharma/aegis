@@ -10,4 +10,4 @@ httpx
 jinja2
 python-multipart
 pytest
-ruff
+ruff==0.16.6
