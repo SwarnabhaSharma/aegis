@@ -156,6 +156,22 @@ def test_audit_renders(client):
     assert r.status_code == 200
 
 
+def test_audit_recorder_wired(client):
+    """create_app must attach app.state.audit_recorder: audit page renders
+    recorded events, integrity endpoint returns a real chain verdict."""
+    c, app = client
+    rec = getattr(app.state, "audit_recorder", None)
+    assert rec is not None
+    ids = _seed_incidents(app.state.store, n=1)
+    rec.record("pipeline_stage", ids[0], actor="test", step="A1")
+    r = c.get("/console/audit")
+    assert r.status_code == 200
+    assert "pipeline_stage" in r.text
+    r = c.get(f"/incidents/{ids[0]}/integrity")
+    assert r.status_code == 200
+    assert r.json()["audit_chain"] is True
+
+
 def test_graph_renders(client):
     c, app = client
     ids = _seed_incidents(app.state.store)

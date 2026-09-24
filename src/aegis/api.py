@@ -48,6 +48,14 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
     default_llm = llm  # None -> construct per-call from settings
     ctl = controls if controls is not None else ControlState.from_env()
     app.state.controls = ctl
+    _is_es_store = st.__class__.__name__ == "ElasticsearchStore"
+    app.state.audit_recorder = AuditRecorder(
+        es=getattr(st, "_es", None) if _is_es_store else None)
+    if _is_es_store:
+        try:
+            app.state.audit_recorder.ensure_index()
+        except Exception:
+            pass  # ES down at boot: app still starts; index on first healthy write
 
     # §17 request tracing: correlation ID on every request
     @app.middleware("http")
@@ -258,17 +266,12 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
         import aegis.slice as sl
 
         registry = None
-        audit_rec = None
         if st.__class__.__name__ == "ElasticsearchStore":
             try:
                 _, registry = sl.build_registry(controls=ctl)
             except Exception:
                 pass  # telemetry unreachable: single-shot fallback
-            from aegis.audit import AuditRecorder
-
-            es_client = st._es  # ponytail: recorder reuses the store's client
-            audit_rec = AuditRecorder(es=es_client)
-            audit_rec.ensure_index()
+        audit_rec = app.state.audit_recorder
         llm = default_llm or LLMClient(settings.llm_base_url, settings.llm_model)
         res = sl.investigate(st, incident_id, llm, registry=registry,
                              audit=audit_rec, controls=ctl)
@@ -391,9 +394,8 @@ def create_app(store=None, llm=None, controls=None) -> FastAPI:
             ctl.uncancel_incident(target)
         else:
             raise HTTPException(status_code=400, detail=f"unknown action: {action}")
-        is_es = st.__class__.__name__ == "ElasticsearchStore"
-        audit_rec = AuditRecorder(es=getattr(st, "_es", None) if is_es else None)
-        audit_rec.record("operator_control", actor="operator", action=action, target=target)
+        app.state.audit_recorder.record(
+            "operator_control", actor="operator", action=action, target=target)
         return get_controls()
 
     # -- console UI (§28) --
