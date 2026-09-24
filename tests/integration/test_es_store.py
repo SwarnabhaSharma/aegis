@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 es_lib = pytest.importorskip("elasticsearch")
+from aegis.config import get_settings  # noqa: E402
 from aegis.incidents.es_store import ElasticsearchStore  # noqa: E402
 from aegis.incidents.evidence import Evidence, TimelineEntry  # noqa: E402
 from aegis.incidents.schema import IncidentState  # noqa: E402
@@ -22,9 +23,10 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def store():
+    s = get_settings()
     client = es_lib.Elasticsearch(
-        "http://192.168.56.105:9200", basic_auth=("elastic", "Mhz03ph9kPS5p2nkq1fZ"),
-        verify_certs=False, request_timeout=30,
+        s.es_host, basic_auth=(s.es_user, s.es_password),
+        verify_certs=s.es_verify_certs, request_timeout=30,
     )
     prefix = f"aegis-test-{uuid.uuid4().hex[:8]}"
     yield ElasticsearchStore(client, prefix=prefix)
