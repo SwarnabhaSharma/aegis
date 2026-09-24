@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     llm_provider: str = "llamacpp"
     llm_model: str = ""
     llm_base_url: str = "http://localhost:8080/v1"
+    llm_api_key: str = "llama-cpp"  # Bearer key; llama.cpp/LM Studio ignore it,
+    # stricter OpenAI-compat backends need the real key
     llm_temperature: float = 0.0  # live note: temp-0 greedy degenerates on
     # Ornith-1.0 turboquant (empty/truncated/off-quote JSON); use 0.5-0.6 there
 

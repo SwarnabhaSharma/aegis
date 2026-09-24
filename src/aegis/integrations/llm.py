@@ -33,11 +33,15 @@ class LLMError(Exception):
 class LLMClient:
     """Thin OpenAI-compat client for llama.cpp (or any /v1 server)."""
 
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, api_key: str | None = None) -> None:
         if not base_url:
             raise ValueError("llm_base_url required")
         self._model = model or "default"
-        self._client = OpenAI(base_url=base_url, api_key="llama-cpp")  # llama.cpp ignores key
+        if api_key is None:
+            from aegis.config import get_settings
+
+            api_key = get_settings().llm_api_key
+        self._client = OpenAI(base_url=base_url, api_key=api_key or "llama-cpp")
 
     @property
     def model_tag(self) -> str:

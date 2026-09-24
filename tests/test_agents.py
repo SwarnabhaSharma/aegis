@@ -43,6 +43,21 @@ def test_llm_client_requires_url():
         LLMClient(base_url="", model="x")
 
 
+def test_llm_client_api_key_from_settings():
+    from aegis.config import get_settings
+
+    s = get_settings()
+    old = s.llm_api_key
+    try:
+        s.llm_api_key = "custom-key"
+        c = LLMClient(base_url="http://localhost:9/v1", model="m")
+        assert c._client.api_key == "custom-key"
+    finally:
+        s.llm_api_key = old
+    c2 = LLMClient(base_url="http://localhost:9/v1", model="m", api_key="explicit")
+    assert c2._client.api_key == "explicit"
+
+
 def test_llm_format_correction_pass():
     """Parse failure on attempt 1 -> attempt 2 carries corrective instruction."""
 
