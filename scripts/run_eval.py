@@ -168,7 +168,7 @@ def main() -> None:
         row = _row_from(sc, res, rec, store, inc.id)
 
         # §20 deterministic baseline comparison (WP-H)
-        from aegis.intel.baseline import baseline_classify, baseline_injection_flag
+        from baseline import baseline_classify, baseline_injection_flag
 
         base = baseline_classify(sc["alert_fields"], events)
         row["baseline_investigate"] = base["investigate"]
