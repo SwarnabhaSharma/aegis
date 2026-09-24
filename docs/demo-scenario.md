@@ -13,8 +13,9 @@ uvicorn aegis.api:app --port 8099
 # UI: http://localhost:8099/dashboard | API: /docs
 ```
 
-Services: none (memory store, FakeLLM). No ES, no llama-server, no API keys.
-Live variant needs ES 8.x + `llama-server`; same screens, real telemetry.
+Services: none (memory store, FakeLLM). No ES, no LLM server, no API keys.
+Live variant needs ES 8.x + an OpenAI-compat LLM server (LM Studio or
+llama.cpp); same screens, real telemetry.
 
 ## Input
 ```powershell
@@ -53,9 +54,10 @@ verify_host_isolated win-vm: isolated:true passed=True
 | `ES_TELEMETRY_INDEX` | `winlogbeat-*` (real host) / `telemetry-synthetic-*` (canned) | no | investigation evidence source |
 | `ES_ALERT_INDEX` | `aegis-dev-alerts` | no | elastic poll ingestion |
 | `AEGIS_STORE` | `es` (durable) / `memory` (offline) | no | persistence backend |
-| `LLM_BASE_URL` | `http://localhost:8080/v1` | no | any real-model run |
-| `LLM_MODEL` | path to Ornith GGUF | no | model identity (stamped in manifest) |
-| `LLM_TEMPERATURE` | `0.6` (Ornith-1.0 turboquant) / `0.0` default | no | sampling; temp-0 greedy degenerates on 1.0 build |
+| `LLM_BASE_URL` | `http://localhost:1234/v1` (LM Studio; code default `:8080` = llama.cpp) | no | any real-model run |
+| `LLM_MODEL` | `spark-x2.5-4b` (live) / path to GGUF | no | model identity (stamped in manifest) |
+| `LLM_TEMPERATURE` | `0.6` (Spark-X2.5-4B live) / `0.0` default | no | sampling; temp-0 can degenerate to bad JSON |
+| `LLM_API_KEY` | `llama-cpp` (ignored by local servers) | no | Bearer for stricter OpenAI-compat backends |
 | `TI_PROVIDERS` | `local,abuseipdb,virustotal,otx` | no | live TI fan-out |
 | `VT_API_KEY` / `ABUSEIPDB_API_KEY` / `OTX_API_KEY` / `NVD_API_KEY` | (from operator) | **yes** | per-provider live lookups |
 | `AEGIS_API_KEY` | (from operator) | **yes** | console + API auth (403/401 when set) |

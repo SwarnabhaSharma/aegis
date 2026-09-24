@@ -10,12 +10,14 @@ dispose**. Five LLM reasoning agents investigate alerts over real Sysmon telemet
 a policy engine, executor, and verifier — all deterministic — decide, act,
 and confirm. The LLM can never mutate incident state or execute actions.
 
-Local-first, no cloud dependencies. Runs on a single laptop with a 9B model.
+Local-first, no cloud dependencies. Runs on a single laptop with a 4B model.
 
-Measured on the bundled eval corpus with a 9B local model:
-precision 1.0, recall 1.0, 0 unsafe actions ([report](evals/report-real-20260823-060037.md)).
-Remeasure before quoting: those runs predate prompt v2 and the sampling-temperature
-knob below — live runs on Ornith-1.0 turboquant need `LLM_TEMPERATURE=0.6`.
+Primary model since 2026-09-23: **Spark-X2.5-4B** via LM Studio
+(`LLM_BASE_URL=http://localhost:1234/v1`, `LLM_TEMPERATURE=0.6`) — bundled-corpus
+eval: recall 1.0, 0 unsafe actions, injection 1/1, precision 0.667
+([report](evals/report-real-20260923-150647.md)). Prior 9B Ornith-1.0 run:
+precision 1.0, recall 1.0 ([report](evals/report-real-20260823-060037.md))
+— pre-prompt-v2, pre-temperature-knob; remeasure before quoting.
 Live-verified 2026-09-06: real model + real winlogbeat telemetry + ES store →
 `RESOLVED`, A1–A5 ok, 200 evidence items ([demo](docs/demo-scenario.md)).
 
@@ -56,8 +58,10 @@ tests/            offline unit suite · integration/ (live-ES, needs AEGIS_INTEG
 
 ## Quickstart
 
-Prereqs: Python ≥3.12; Elasticsearch 8.x reachable (VM or local); llama.cpp
-server (`llama-server -m <model.gguf> --port 8080`) for real LLM mode.
+Prereqs: Python ≥3.12; Elasticsearch 8.x reachable (VM or local); an
+OpenAI-compatible LLM server for real LLM mode — LM Studio
+(`http://localhost:1234/v1`, live default) or llama.cpp
+(`llama-server -m <model.gguf> --port 8080`, code default).
 
 ```powershell
 pip install -r requirements.txt
@@ -97,9 +101,10 @@ $env:AEGIS_INTEGRATION="1"; python -m pytest tests\integration -v   # live-ES
 |---|---|---|
 | `ES_HOST` | `http://192.168.56.105:9200` | Elasticsearch endpoint |
 | `ES_USER` / `ES_PASSWORD` | elastic / — | ES credentials (gitignored `.env` only) |
-| `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server |
-| `LLM_TEMPERATURE` | `0.0` | Sampling temp; `0.5`–`0.6` on Ornith-1.0 turboquant (temp-0 greedy emits bad JSON) |
-| `LLM_MODEL` | — | Model id/path (recorded in per-incident manifest) |
+| `LLM_BASE_URL` | `http://localhost:8080/v1` | OpenAI-compatible LLM server; live uses `http://localhost:1234/v1` (LM Studio) |
+| `LLM_API_KEY` | `llama-cpp` | Bearer key; llama.cpp/LM Studio ignore it, stricter backends need the real key |
+| `LLM_TEMPERATURE` | `0.0` | Sampling temp; `0.6` for Spark-X2.5-4B live (temp-0 greedy can emit bad JSON) |
+| `LLM_MODEL` | — | Model id/path (recorded in per-incident manifest); live `spark-x2.5-4b` |
 | `TI_PROVIDERS` | `local` | TI fan-out, e.g. `local,abuseipdb,virustotal,otx` (+ `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `OTX_API_KEY`, `NVD_API_KEY`) |
 | `ES_TELEMETRY_INDEX` | canned synthetic index | telemetry source (`winlogbeat-*` for a real host) |
 | `ES_ALERT_INDEX` | `aegis-dev-alerts` | index polled for new alerts |
@@ -152,22 +157,22 @@ Threat analysis: [docs/threat-model.md](docs/threat-model.md).
 
 ## Evaluation
 
-Strongest proof artifact: the per-scenario report
-([report-real-20260823-060037.md](evals/report-real-20260823-060037.md)) —
-metrics plus what happened in every scenario, including where the model
-fabricated evidence references and the validator stripped them.
+Strongest proof artifact: the current Spark-X2.5-4B report
+([report-real-20260923-150647.md](evals/report-real-20260923-150647.md)) —
+metrics plus what happened in every scenario. The earlier 9B report
+([report-real-20260823-060037.md](evals/report-real-20260823-060037.md))
+shows fabrication + validator stripping behavior.
 
 `evals/corpus.json` holds the labeled scenarios (malicious/benign/ambiguous,
 incl. prompt-injection-in-telemetry). `scripts/run_eval.py` runs them through
 the real pipeline and writes fresh metrics + reports into `evals/`.
-Rerun before quoting numbers: the checked-in report predates prompt v2 and
-the `LLM_TEMPERATURE` knob.
+Rerun before quoting numbers: model, prompt version, and sampling all move results.
 
 ## Limitations
 
 - Simulated executor/verifier backends (ADR-013): isolation state is
   in-memory; contract matches a real EDR backend swap.
-- Console UI: Jinja2 server-rendered, no build step (ADR-008). No threat map,
+- Console UI: Jinja2 server-rendered, no build step (ADR-023). No threat map,
   no global search, no ad-hoc query console — deferred, see [ui-plan](docs/ui-plan.md).
 - Detection quality depends on the local model — measure with your own
   model via `run_eval.py`, do not assume these numbers transfer.

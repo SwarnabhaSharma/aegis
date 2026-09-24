@@ -1,4 +1,4 @@
-# ADR-007 — Autonomous Operations Loop
+# ADR-022 — Autonomous Operations Loop
 
 - **Decision**: Add an autonomous operations loop as the outer layer of Aegis. The loop continuously polls ES for alerts, prioritizes by `severity × age × asset_criticality` (multiplicative scoring), and feeds them into the existing single-alert investigate pipeline. Approval requests are queued; the loop continues investigating other alerts while waiting. Sequential investigation (one alert at a time). Backpressure: slow down when model/ES overloaded.
 

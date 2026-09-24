@@ -31,7 +31,7 @@ assets, threats, implemented mitigations, and honest residuals. Companion to
 | 3 | Tool abuse — agent calls unauthorized tool | **Built** — registry allowlist per agent; response tools exclusive to D1; revocable at runtime (`81a600f`) |
 | 4 | Privilege escalation — agent gains permissions | **Built** — static immutable permission sets; agents cannot request scope change |
 | 5 | Data exfiltration — agent reads unrelated sensitive data | **Partial** — read scope bounded by registered tools; privacy redaction masks secrets/PII before AI views (`318f3e1`); task-based minimization not yet built |
-| 6 | Malicious external threat intelligence | **Deferred** — TI is a local static store; re-threat-model before adding any live feed |
+| 6 | Malicious external threat intelligence | **Partial** — TI chain fans out to live providers (AbuseIPDB/VT/OTX) behind a private-IP guard, per-provider rate limits, and local-store fallback; re-threat-model as feeds or provider count grow |
 | 7 | Agent loops (agents calling agents) | **Built** — no agent→agent calls; store-mediated handoff only |
 | 8 | Excessive tool calls | **Built** — real per-incident budget + per-agent step budget; exceed → degrade → escalate |
 | 9 | Hallucinated evidence — invented evidence_ids | **Built** — post-pipeline validation strips fabricated refs, flags to audit (`bb18bd2`); measured: local 9B fabricates routinely, defense fires every run |
@@ -48,8 +48,9 @@ assets, threats, implemented mitigations, and honest residuals. Companion to
 - **Injection detector is heuristic**: known-pattern list; novel phrasings may
   pass wrapping undefended (wrapping itself remains the primary control).
   Extend patterns from eval findings.
-- **Audit tamper-protection absent**: audit records are append-only by
-  convention, not cryptographically chained. Planned layer.
+- **Audit chain durability**: audit records are hash-chained (`verify_chain`
+  detects mutation), but in memory-store mode the chain lives in-process only —
+  survives restarts only with `AEGIS_STORE=es`.
 - **Simulated backends**: executor state is in-memory; real EDR integration
   re-opens §16 review before production use (ADR-013).
 - **Single-operator assumption** (ADR-014): role-based privacy views and

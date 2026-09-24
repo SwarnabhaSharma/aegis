@@ -1,4 +1,4 @@
-# ADR-009 — API Key Auth with Console Bypass
+# ADR-024 — API Key Auth with Console Bypass
 
 - **Decision**: API key authentication via middleware. Console UI pages (HTML) bypass auth. API endpoints require key when `AEGIS_API_KEY` is set.
 

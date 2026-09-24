@@ -96,14 +96,15 @@ Status: OPEN | APPROVED | REJECTED | SUPERSEDED
 - **Status**: APPROVED
 - **Downstream**: Phase 0 scaffolding, config module.
 
-## ADR-011 — LLM backend: llama.cpp server
-- **Decision**: Local LLM via llama.cpp server, OpenAI-compatible (`http://localhost:8080/v1` default). Swappable provider interface; one env var to change.
-- **Alternatives**: Ollama (rejected); LM Studio (superseded — user switched back to llama.cpp 2026-08-18).
-- **Recommendation**: llama.cpp.
+## ADR-011 — LLM backend: OpenAI-compat local server
+- **Decision**: Local LLM via OpenAI-compatible server (llama.cpp default `http://localhost:8080/v1`). Swappable provider interface; one env var to change.
+- **Alternatives**: Ollama (rejected); LM Studio (superseded 2026-08-18, re-adopted 2026-09-23).
+- **Recommendation**: OpenAI-compat server; backend choice is configuration, not code.
 - **Rationale**: User decision 2026-08-18. Headless, scriptable, faster on constrained HW (user measures throughput/perplexity), native quant/ternary GGUF control, no GUI overhead. OpenAI-compat keeps `openai` client interface unchanged (ADR-019).
 - **Trade-offs**: No GUI eyeballing; slightly more manual config. Negligible — swap cost = `LLM_BASE_URL` + `LLM_PROVIDER`.
-- **Status**: APPROVED (supersedes LM Studio choice)
-- **Downstream**: `integrations/llm.py`, config (`LLM_BASE_URL`, `LLM_MODEL`).
+- **Amendment 2026-09-23**: primary model swapped Ornith-1.0-9B → **Spark-X2.5-4B** served by LM Studio at `http://localhost:1234/v1`, `LLM_TEMPERATURE=0.6`. Evidence: `evals/report-real-20260923-150647`. Revert = 3 `.env` lines.
+- **Status**: APPROVED (amended 2026-09-23)
+- **Downstream**: `integrations/llm.py`, config (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`).
 
 ## ADR-012 — Synthetic telemetry first
 - **Decision**: Early phases use a synthetic/corpus-driven event generator into ES. Live Windows VM events deferred.

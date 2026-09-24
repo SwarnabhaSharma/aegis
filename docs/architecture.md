@@ -95,7 +95,7 @@ Operator-only, LLM-independent: pause, disable agent/tool, revoke permission, fo
 |---|---|
 | Backend | FastAPI, Python |
 | Store | Elasticsearch (Ubuntu VM 192.168.56.105, v8.19.20) — ES-only (ADR-017) |
-| LLM backend | llama.cpp server, OpenAI-compat `http://localhost:8080/v1` (ADR-011) |
+| LLM backend | OpenAI-compat server — live: LM Studio `http://localhost:1234/v1` (Spark-X2.5-4B); code default: llama.cpp `:8080` (ADR-011) |
 | LLM client | `openai` python lib (ADR-019) |
 | Orchestration | custom in-process state machine (ADR-018) |
 | Policy | custom pure function |

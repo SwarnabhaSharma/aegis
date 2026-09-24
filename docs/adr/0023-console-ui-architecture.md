@@ -1,4 +1,4 @@
-# ADR-008 — Console UI Architecture
+# ADR-023 — Console UI Architecture
 
 - **Decision**: Use Jinja2 server-rendered templates with custom dark CSS for the console UI. No frontend framework, no build step, no npm.
 
@@ -27,4 +27,4 @@
   - Templates: `templates/*.html` (10 templates)
   - CSS: `static/console.css` (dark theme, stats grid, severity bars)
   - JS: inline `<script>` for auto-refresh on operations page
-  - Auth: console pages skip API key auth (see ADR-009)
+  - Auth: console pages skip API key auth (see ADR-024)
